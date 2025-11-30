@@ -634,6 +634,76 @@ async function handleGetPendingWithdrawals(req, res, body) {
 }
 
 /**
+ * NEW HANDLER: type: "updateBalance"
+ * Admin-only: update a target user's balance.
+ * Expects: user_id (admin), action_id, target_user_id, new_balance
+ */
+async function handleUpdateBalance(req, res, body) {
+    const { user_id, action_id, target_user_id, new_balance } = body;
+    const adminId = parseInt(user_id);
+
+    if (!target_user_id) return sendError(res, 'Missing target_user_id.', 400);
+    if (new_balance === undefined) return sendError(res, 'Missing new_balance.', 400);
+
+    // Validate and consume action id
+    if (!await validateAndUseActionId(res, adminId, action_id, 'updateBalance')) return;
+
+    // Admin check
+    const ADMIN_USER_ID = process.env.ADMIN_USER_ID ? parseInt(process.env.ADMIN_USER_ID) : null;
+    if (ADMIN_USER_ID && adminId !== ADMIN_USER_ID) {
+        return sendError(res, 'Not authorized to perform this action.', 403);
+    }
+
+    try {
+        const targetId = parseInt(target_user_id);
+        const nb = parseFloat(new_balance);
+        if (isNaN(nb)) return sendError(res, 'Invalid new_balance value.', 400);
+
+        // Update user balance
+        await supabaseFetch('users', 'PATCH', { balance: nb }, `?id=eq.${targetId}`);
+        sendSuccess(res, { message: `Balance updated for user ${targetId}.`, new_balance: nb });
+    } catch (error) {
+        console.error('UpdateBalance failed:', error.message);
+        sendError(res, `Failed to update balance: ${error.message}`, 500);
+    }
+}
+
+/**
+ * NEW HANDLER: type: "toggleBan"
+ * Admin-only: ban or unban a target user.
+ * Expects: user_id (admin), action_id, target_user_id, action ('ban' | 'unban')
+ */
+async function handleToggleBan(req, res, body) {
+    const { user_id, action_id, target_user_id, action } = body;
+    const adminId = parseInt(user_id);
+
+    if (!target_user_id) return sendError(res, 'Missing target_user_id.', 400);
+    if (!action) return sendError(res, 'Missing action (ban/unban).', 400);
+
+    // Validate and consume action id
+    if (!await validateAndUseActionId(res, adminId, action_id, 'toggleBan')) return;
+
+    // Admin check
+    const ADMIN_USER_ID = process.env.ADMIN_USER_ID ? parseInt(process.env.ADMIN_USER_ID) : null;
+    if (ADMIN_USER_ID && adminId !== ADMIN_USER_ID) {
+        return sendError(res, 'Not authorized to perform this action.', 403);
+    }
+
+    try {
+        const targetId = parseInt(target_user_id);
+        if (isNaN(targetId)) return sendError(res, 'Invalid target_user_id.', 400);
+
+        const setBan = (action === 'ban');
+        await supabaseFetch('users', 'PATCH', { is_banned: setBan }, `?id=eq.${targetId}`);
+
+        sendSuccess(res, { message: `User ${targetId} ${setBan ? 'banned' : 'unbanned'}.`, is_banned: setBan });
+    } catch (error) {
+        console.error('ToggleBan failed:', error.message);
+        sendError(res, `Failed to ${action} user: ${error.message}`, 500);
+    }
+}
+
+/**
  * 1) type: "register"
  * ⚠️ Fix: Includes task_completed: false for new users.
  */
@@ -1098,6 +1168,12 @@ module.exports = async (req, res) => {
       break;
     case 'getPendingWithdrawals': // <-- Added handler for admin pending withdrawals
       await handleGetPendingWithdrawals(req, res, body);
+      break;
+    case 'updateBalance': // <-- Added handler for admin update balance
+      await handleUpdateBalance(req, res, body);
+      break;
+    case 'toggleBan': // <-- Added handler for admin toggle ban
+      await handleToggleBan(req, res, body);
       break;
     case 'register':
       await handleRegister(req, res, body);
