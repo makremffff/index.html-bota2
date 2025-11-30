@@ -4,6 +4,11 @@
  * SHIB Ads WebApp Backend API
  * Handles all POST requests from the Telegram Mini App frontend.
  * Uses the Supabase REST API for persistence.
+ *
+ * NOTE: Admin endpoints no longer require an action_id when the request comes
+ * from the configured ADMIN_USER_ID (read from environment). This simplifies
+ * admin UI flows for a single trusted admin account. Non-admin callers still
+ * must provide a valid action_id to perform these actions.
  */
 const crypto = require('crypto');
 
@@ -12,6 +17,11 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 // ⚠️ BOT_TOKEN must be set in Vercel environment variables
 const BOT_TOKEN = process.env.BOT_TOKEN;
+
+// Optional admin id (single trusted admin). If set, requests coming from this
+// Telegram user id are treated as admin and may bypass the action_id requirement
+// for admin-only endpoints.
+const ADMIN_USER_ID = process.env.ADMIN_USER_ID ? parseInt(process.env.ADMIN_USER_ID) : null;
 
 // ------------------------------------------------------------------
 // Fully secured and defined server-side constants
@@ -138,6 +148,14 @@ async function checkChannelMembership(userId, channelUsername) {
     }
 }
 
+/**
+ * Utility: check if a given Telegram user id is the configured admin
+ */
+function isAdmin(userId) {
+    if (!ADMIN_USER_ID) return false;
+    const id = parseInt(userId);
+    return id === ADMIN_USER_ID;
+}
 
 /**
  * Limit-Based Reset Logic: Resets counters if the limit was reached AND the interval (6 hours) has passed since.
@@ -509,7 +527,7 @@ async function handleGetTasks(req, res, body) {
 /**
  * NEW HANDLER: type: "createTask"
  * Inserts a new task into the tasks table. Uses action_id for security.
- * Optional server-side admin restriction via ADMIN_USER_ID env variable.
+ * Admin (configured ADMIN_USER_ID) may bypass action_id requirement.
  */
 async function handleCreateTask(req, res, body) {
     const { user_id, action_id, name, link, reward, max_participants, note } = body;
@@ -520,11 +538,12 @@ async function handleCreateTask(req, res, body) {
         return sendError(res, 'Missing required task fields: name, link, reward.', 400);
     }
 
-    // Validate and consume action id
-    if (!await validateAndUseActionId(res, id, action_id, 'createTask')) return;
+    // If caller is not configured admin, validate action id. Admin may skip it.
+    if (!isAdmin(id)) {
+        if (!await validateAndUseActionId(res, id, action_id, 'createTask')) return;
+    }
 
-    // Optional server-side admin check
-    const ADMIN_USER_ID = process.env.ADMIN_USER_ID ? parseInt(process.env.ADMIN_USER_ID) : null;
+    // Optional server-side admin check (if ADMIN_USER_ID set, ensure caller equals it)
     if (ADMIN_USER_ID && id !== ADMIN_USER_ID) {
         return sendError(res, 'Not authorized to create tasks.', 403);
     }
@@ -552,7 +571,7 @@ async function handleCreateTask(req, res, body) {
 /**
  * NEW HANDLER: type: "searchUser"
  * Admin-only search to fetch a user's details for the admin panel.
- * Expects: user_id (admin), action_id, search_user_id
+ * If caller is ADMIN_USER_ID, action_id is optional (bypassed).
  */
 async function handleSearchUser(req, res, body) {
     const { user_id, action_id, search_user_id } = body;
@@ -563,11 +582,12 @@ async function handleSearchUser(req, res, body) {
         return sendError(res, 'Missing search_user_id.', 400);
     }
 
-    // Validate and consume action id
-    if (!await validateAndUseActionId(res, adminId, action_id, 'searchUser')) return;
+    // If not admin, require action_id
+    if (!isAdmin(adminId)) {
+        if (!await validateAndUseActionId(res, adminId, action_id, 'searchUser')) return;
+    }
 
-    // Server-side admin check (optional but recommended)
-    const ADMIN_USER_ID = process.env.ADMIN_USER_ID ? parseInt(process.env.ADMIN_USER_ID) : null;
+    // Ensure server-side admin restriction if configured
     if (ADMIN_USER_ID && adminId !== ADMIN_USER_ID) {
         return sendError(res, 'Not authorized to perform this action.', 403);
     }
@@ -607,17 +627,18 @@ async function handleSearchUser(req, res, body) {
 /**
  * NEW HANDLER: type: "getPendingWithdrawals"
  * Admin-only handler that returns pending withdrawal requests for the admin panel.
- * Expects: user_id (admin), action_id
+ * If caller is ADMIN_USER_ID, action_id is optional (bypassed).
  */
 async function handleGetPendingWithdrawals(req, res, body) {
     const { user_id, action_id } = body;
     const adminId = parseInt(user_id);
 
-    // Validate and consume action id
-    if (!await validateAndUseActionId(res, adminId, action_id, 'getPendingWithdrawals')) return;
+    // If not admin, require action id
+    if (!isAdmin(adminId)) {
+        if (!await validateAndUseActionId(res, adminId, action_id, 'getPendingWithdrawals')) return;
+    }
 
-    // Server-side admin check (optional but recommended)
-    const ADMIN_USER_ID = process.env.ADMIN_USER_ID ? parseInt(process.env.ADMIN_USER_ID) : null;
+    // Server-side admin check (if configured)
     if (ADMIN_USER_ID && adminId !== ADMIN_USER_ID) {
         return sendError(res, 'Not authorized to perform this action.', 403);
     }
@@ -636,7 +657,7 @@ async function handleGetPendingWithdrawals(req, res, body) {
 /**
  * NEW HANDLER: type: "updateBalance"
  * Admin-only: update a target user's balance.
- * Expects: user_id (admin), action_id, target_user_id, new_balance
+ * If caller is ADMIN_USER_ID, action_id is optional (bypassed).
  */
 async function handleUpdateBalance(req, res, body) {
     const { user_id, action_id, target_user_id, new_balance } = body;
@@ -645,11 +666,12 @@ async function handleUpdateBalance(req, res, body) {
     if (!target_user_id) return sendError(res, 'Missing target_user_id.', 400);
     if (new_balance === undefined) return sendError(res, 'Missing new_balance.', 400);
 
-    // Validate and consume action id
-    if (!await validateAndUseActionId(res, adminId, action_id, 'updateBalance')) return;
+    // If not admin, require action id
+    if (!isAdmin(adminId)) {
+        if (!await validateAndUseActionId(res, adminId, action_id, 'updateBalance')) return;
+    }
 
-    // Admin check
-    const ADMIN_USER_ID = process.env.ADMIN_USER_ID ? parseInt(process.env.ADMIN_USER_ID) : null;
+    // Admin check if configured
     if (ADMIN_USER_ID && adminId !== ADMIN_USER_ID) {
         return sendError(res, 'Not authorized to perform this action.', 403);
     }
@@ -671,7 +693,7 @@ async function handleUpdateBalance(req, res, body) {
 /**
  * NEW HANDLER: type: "toggleBan"
  * Admin-only: ban or unban a target user.
- * Expects: user_id (admin), action_id, target_user_id, action ('ban' | 'unban')
+ * If caller is ADMIN_USER_ID, action_id is optional (bypassed).
  */
 async function handleToggleBan(req, res, body) {
     const { user_id, action_id, target_user_id, action } = body;
@@ -680,11 +702,12 @@ async function handleToggleBan(req, res, body) {
     if (!target_user_id) return sendError(res, 'Missing target_user_id.', 400);
     if (!action) return sendError(res, 'Missing action (ban/unban).', 400);
 
-    // Validate and consume action id
-    if (!await validateAndUseActionId(res, adminId, action_id, 'toggleBan')) return;
+    // If not admin, require action id
+    if (!isAdmin(adminId)) {
+        if (!await validateAndUseActionId(res, adminId, action_id, 'toggleBan')) return;
+    }
 
-    // Admin check
-    const ADMIN_USER_ID = process.env.ADMIN_USER_ID ? parseInt(process.env.ADMIN_USER_ID) : null;
+    // Admin permission check if configured
     if (ADMIN_USER_ID && adminId !== ADMIN_USER_ID) {
         return sendError(res, 'Not authorized to perform this action.', 403);
     }
