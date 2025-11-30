@@ -1,0 +1,1160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SHIB Admin Panel</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        /* Import Fonts */
+        @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700;800;900&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&display=swap');
+        
+        /* Global Reset & Base Styles */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Vazirmatn', Arial, Helvetica, sans-serif;
+            background: #2a2a2a; /* خلفية داكنة احترافية */
+            color: #e0e0e0;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+            padding: 15px;
+            overflow-y: auto;
+            scrollbar-width: none; /* إخفاء شريط التمرير لبعض المتصفحات */
+            -ms-overflow-style: none;
+        }
+        body::-webkit-scrollbar {
+            display: none;
+        }
+
+        /* 3D Container Style (Neo-Morphic/Neo-Brutalist) */
+        .admin-screen {
+            width: 100%;
+            max-width: 900px;
+            display: flex;
+            flex-direction: column;
+            gap: 25px;
+            background: linear-gradient(180deg, #333333 0%, #2f2f2f 100%);
+            padding: 30px;
+            border-radius: 18px;
+            border: 1px solid rgba(90,90,90,0.6);
+            box-shadow: 
+                18px 18px 40px rgba(0, 0, 0, 0.6), /* ظل خارجي داكن لعمق 3D */
+                -6px -6px 16px rgba(70, 70, 70, 0.18), /* إضاءة علوية */
+                inset 2px 2px 6px rgba(0, 0, 0, 0.35); /* ظل داخلي خفيف */
+            margin-top: 15px;
+        }
+
+        /* Header Styles */
+        .admin-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+        }
+
+        .title-block {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .admin-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 30px;
+            color: #00ff99; /* لون نيون مميز */
+            font-weight: 800;
+            text-shadow: 0 0 7px #00ff99, 0 0 12px #00aaff;
+            letter-spacing: 1px;
+            margin-bottom: 5px;
+        }
+
+        .admin-subtitle {
+            font-size: 14px;
+            color: #a0a0a0;
+        }
+
+        /* Top controls (Add Task quick button + small help) */
+        .top-controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .quick-add-btn {
+            background: linear-gradient(180deg,#00aaff,#0077b3);
+            color: #fff;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 12px;
+            font-weight: 800;
+            cursor: pointer;
+            box-shadow: 6px 6px 0 rgba(0,120,180,0.25);
+            transition: transform .12s ease, box-shadow .12s ease;
+        }
+        .quick-add-btn:hover { transform: translateY(-2px); box-shadow: 8px 8px 0 rgba(0,120,180,0.3); }
+
+        .small-info {
+            font-size: 12px;
+            color: #c8eaff;
+            background: rgba(0,170,255,0.06);
+            padding: 8px 10px;
+            border-radius: 10px;
+            border: 1px solid rgba(0,170,255,0.06);
+        }
+
+        /* Navigation/Tabs Styles (Buttons) */
+        .admin-nav {
+            display: flex;
+            justify-content: space-around;
+            gap: 15px;
+            padding: 5px;
+            border-radius: 15px;
+            background: #2c2c2c;
+            box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.5);
+        }
+
+        .nav-btn {
+            flex-grow: 1;
+            padding: 12px 10px;
+            border: none;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            background: #444444;
+            color: #d0d0d0;
+            transition: all .2s cubic-bezier(.175, .885, .32, 1.275);
+            box-shadow: 3px 3px 8px rgba(0, 0, 0, 0.6), -3px -3px 8px rgba(70, 70, 70, 0.4); /* 3D effect */
+        }
+
+        .nav-btn:hover {
+            transform: scale(1.02);
+        }
+
+        .nav-btn.active {
+            background: #00ff99; /* لون نشط */
+            color: #1a1a1a;
+            transform: translateY(-2px) scale(1.03);
+            box-shadow: 
+                5px 5px 15px rgba(0, 255, 153, 0.25), 
+                -5px -5px 10px rgba(0, 255, 153, 0.12);
+            border: 1px solid #1a1a1a;
+        }
+        
+        /* Content Sections */
+        .content-section {
+            background: #2f2f2f;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #444;
+            box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.4);
+            display: none;
+        }
+        
+        .content-section.active {
+            display: block;
+        }
+        
+        .history-title {
+            font-size: 22px;
+            color: #00aaff;
+            margin-bottom: 15px;
+            font-weight: 800;
+            text-align: center;
+            border-bottom: 2px solid #444;
+            padding-bottom: 10px;
+        }
+
+        /* List Items (Withdrawals) */
+        .admin-list-item {
+            display: flex;
+            flex-direction: column; /* تحسين الاستجابة */
+            gap: 10px;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 15px 0;
+            border-bottom: 1px dashed #444;
+        }
+
+        .admin-list-item:last-child {
+            border-bottom: none;
+        }
+
+        .user-info-admin {
+            width: 100%;
+            text-align: right; /* محاذاة لليمين */
+        }
+
+        .user-info-admin h4 {
+            margin: 0;
+            font-size: 17px;
+            color: #00ff99;
+            font-weight: 700;
+        }
+
+        .user-info-admin p {
+            margin: 5px 0 0;
+            font-size: 13px;
+            color: #b0b0b0;
+            line-height: 1.5;
+            word-break: break-all;
+        }
+
+        .admin-actions {
+            width: 100%;
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end; /* وضع الأزرار لليمين */
+        }
+
+        /* Action Buttons */
+        .action-btn {
+            flex-grow: 1;
+            max-width: 100px; /* تحديد عرض الأزرار */
+            padding: 10px 8px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all .1s ease;
+            border: none;
+            box-shadow: 3px 3px 5px rgba(0, 0, 0, 0.5);
+        }
+
+        .action-btn:active {
+            transform: translateY(2px);
+            box-shadow: 1px 1px 3px rgba(0, 0, 0, 0.5); /* تأثير الضغط 3D */
+        }
+
+        .accept-btn {
+            background: #28a745;
+            color: #fff;
+        }
+
+        .reject-btn {
+            background: #dc3545;
+            color: #fff;
+        }
+
+        .ban-btn {
+            background: #ffc107;
+            color: #333;
+        }
+        
+        /* Search and User Management Styles */
+        .search-section {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .search-input-group {
+            width: 100%;
+            display: flex;
+            gap: 10px;
+        }
+
+        #searchUserId, #newBalance {
+            flex-grow: 1;
+            padding: 12px;
+            border: 2px solid #00ff99;
+            border-radius: 10px;
+            font-size: 16px;
+            background: #444;
+            color: #fff;
+            box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.5);
+            text-align: right;
+            outline: none;
+        }
+
+        .search-btn {
+            background: #00aaff;
+            color: #fff;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 800;
+            cursor: pointer;
+            transition: all .1s ease;
+            box-shadow: 4px 4px 0 #007bbd; /* 3D Flat-style Shadow */
+        }
+        
+        .search-btn:active {
+            transform: translate(2px, 2px);
+            box-shadow: 2px 2px 0 #007bbd;
+        }
+
+        /* User Result Card (NEW) */
+        #userResult {
+            width: 100%;
+            padding: 20px;
+            margin-top: 5px;
+            border: 1px solid #00ff99;
+            border-radius: 15px;
+            background: #3b3b3b;
+            text-align: right;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.4);
+            display: none;
+        }
+
+        #userResult h4 {
+            font-size: 18px;
+            color: #00ff99;
+            border-bottom: 1px solid #4a4a4a;
+            padding-bottom: 8px;
+            margin-bottom: 10px;
+        }
+
+        #userResult p {
+            margin: 8px 0;
+            font-size: 15px;
+            color: #e0e0e0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        #userResult span {
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            color: #fff;
+        }
+        
+        /* Edit Balance Group */
+        .edit-balance-group {
+            display: flex;
+            flex-wrap: wrap; /* للسماح للكسر على شاشات صغيرة */
+            gap: 10px;
+            align-items: center;
+            width: 100%;
+            margin-top: 15px;
+            border-top: 1px solid #4a4a4a;
+            padding-top: 15px;
+        }
+
+        #newBalance {
+            flex-grow: 1;
+            min-width: 150px;
+            text-align: left;
+        }
+
+        .update-btn {
+            background: #ff8c00;
+            color: #fff;
+            padding: 12px 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 800;
+            cursor: pointer;
+            transition: all .1s ease;
+            box-shadow: 4px 4px 0 #cc7000;
+        }
+
+        .update-btn:active {
+            transform: translate(2px, 2px);
+            box-shadow: 2px 2px 0 #cc7000;
+        }
+
+        /* Responsive Fix for Buttons in Edit Group */
+        .edit-balance-group .action-btn {
+            max-width: none;
+            flex-grow: 1;
+        }
+        
+        .no-records {
+            text-align: center;
+            color: #999;
+            padding: 20px;
+            font-size: 16px;
+        }
+
+        /* Custom Alert - Theme Update */
+        .custom-alert-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, .8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 99999;
+            opacity: 0;
+            transition: opacity .3s ease;
+        }
+
+        .custom-alert-overlay.visible {
+            display: flex;
+            opacity: 1;
+        }
+
+        .custom-alert-box {
+            width: 90%;
+            max-width: 300px;
+            background: #2a2a2a;
+            border-radius: 15px;
+            padding: 25px 20px;
+            text-align: center;
+            box-shadow: 0 0 20px rgba(0, 255, 153, 0.3), 0 8px 15px rgba(0, 0, 0, .5);
+            border: 2px solid #00ff99;
+            transform: scale(.8);
+            transition: transform .3s cubic-bezier(.175, .885, .32, 1.275);
+        }
+
+        .custom-alert-overlay.visible .custom-alert-box {
+            transform: scale(1);
+        }
+
+        .alert-title {
+            font-family: 'Vazirmatn', sans-serif;
+            font-size: 22px;
+            font-weight: 800;
+            color: #00ff99;
+            margin-bottom: 8px;
+            text-shadow: 0 0 5px #00ff99;
+        }
+
+        .alert-message {
+            font-family: 'Vazirmatn', sans-serif;
+            font-size: 14px;
+            color: #e0e0e0;
+            margin-bottom: 20px;
+            white-space: pre-wrap;
+        }
+
+        .alert-icon {
+            font-size: 30px;
+            margin-bottom: 15px;
+        }
+
+        .alert-close-btn {
+            background: #00aaff;
+            color: #fff;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 800;
+            cursor: pointer;
+            box-shadow: 0 4px 0 #007bbd;
+            transition: all .1s ease;
+        }
+
+        .alert-close-btn:active {
+            transform: translateY(2px);
+            box-shadow: 0 2px 0 #007bbd;
+        }
+
+        .custom-alert-box.success .alert-title {
+            color: #28a745;
+        }
+
+        .custom-alert-box.success .alert-icon::before {
+            content: '✅';
+        }
+
+        .custom-alert-box.error .alert-title {
+            color: #dc3545;
+        }
+
+        .custom-alert-box.error .alert-icon::before {
+            content: '❌';
+        }
+
+        .custom-alert-box.warning .alert-title {
+            color: #ffc107;
+        }
+
+        .custom-alert-box.warning .alert-icon::before {
+            content: '⚠️';
+        }
+
+        /* ---- Add Task Modal ---- */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.6);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 100000;
+            padding: 20px;
+        }
+        .modal-overlay.visible { display: flex; }
+
+        .modal-box {
+            width: 100%;
+            max-width: 640px;
+            background: linear-gradient(180deg,#2f2f2f,#272727);
+            border-radius: 12px;
+            padding: 18px;
+            border: 1px solid #444;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .modal-title {
+            font-size: 18px;
+            color: #00ff99;
+            font-weight: 800;
+        }
+
+        .modal-close {
+            background: transparent;
+            border: none;
+            color: #c8eaff;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        .modal-form {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .modal-form .full {
+            grid-column: 1 / -1;
+        }
+
+        .modal-form label {
+            font-size: 13px;
+            color: #bcdfff;
+            margin-bottom: 6px;
+            display: block;
+        }
+
+        .modal-form input, .modal-form textarea {
+            width: 100%;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #4a4a4a;
+            background: #3a3a3a;
+            color: #fff;
+            outline: none;
+            font-size: 14px;
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        .btn-cancel {
+            background: #666;
+            color: #fff;
+            padding: 10px 14px;
+            border-radius: 10px;
+            border: none;
+            cursor: pointer;
+            font-weight: 700;
+        }
+
+        .btn-create {
+            background: linear-gradient(180deg,#00ff99,#00c27a);
+            color: #08220f;
+            padding: 10px 16px;
+            border-radius: 10px;
+            border: none;
+            cursor: pointer;
+            font-weight: 900;
+            box-shadow: 6px 6px 0 rgba(0,180,120,0.12);
+        }
+
+        /* Responsive Adjustments */
+        @media (max-width: 820px) {
+            .admin-screen { padding: 18px; }
+            .modal-form { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 450px) {
+            .admin-screen {
+                padding: 15px;
+            }
+            .admin-title {
+                font-size: 24px;
+            }
+            .admin-nav {
+                flex-direction: column;
+                gap: 8px;
+            }
+            .search-input-group {
+                flex-direction: column;
+            }
+            .search-btn, .update-btn {
+                width: 100%;
+                margin-top: 5px;
+            }
+            .edit-balance-group {
+                flex-direction: column;
+            }
+            #newBalance, .edit-balance-group .action-btn {
+                width: 100%;
+            }
+            .admin-actions {
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+            .action-btn {
+                flex-grow: 1;
+                max-width: 48%; /* زرّين في السطر */
+            }
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="admin-screen" id="adminScreen">
+        <div class="admin-header">
+            <div class="title-block">
+                <h2 class="admin-title">👑 لوحة تحكم المسؤول</h2>
+                <div class="admin-subtitle">إدارة التطبيق والأعضاء / إضافة مهام مباشرة إلى الخادم</div>
+            </div>
+
+            <div class="top-controls">
+                <div class="small-info">Quick: Add a task to the live tasks table</div>
+                <button class="quick-add-btn" onclick="openAddTaskModal()">➕ إضافة مهمة جديدة</button>
+            </div>
+        </div>
+        
+        <div class="admin-nav">
+            <button class="nav-btn active" data-target="withdrawals-section" onclick="showSection('withdrawals-section', this)">💳 السحوبات المعلقة</button>
+            <button class="nav-btn" data-target="user-management-section" onclick="showSection('user-management-section', this)">👤 إدارة المستخدم</button>
+            <button class="nav-btn" data-target="tasks-section" onclick="showSection('tasks-section', this)">📝 المهام الحالية</button>
+        </div>
+        
+        <div class="content-section" id="withdrawals-section">
+            <h3 class="history-title">💳 طلبات السحب المعلقة</h3>
+            <div id="pendingWithdrawalsList">
+                <div class="no-records">جاري تحميل طلبات السحب...</div>
+            </div>
+        </div>
+
+        <div class="content-section" id="user-management-section">
+            <h3 class="history-title">🔍 البحث وتعديل نقاط المستخدم</h3>
+            <div class="search-section">
+                <div class="search-input-group">
+                    <input type="text" id="searchUserId" placeholder="أدخل معرّف المستخدم (User ID)">
+                    <button class="search-btn" onclick="searchUser()">بحث</button>
+                </div>
+                
+                <div id="userResult" style="display: none;">
+                    <h4>بيانات المستخدم: <span id="resUserName">N/A</span> (<span id="resUserId">N/A</span>)</h4>
+                    
+                    <p>الرصيد الحالي: <span id="resUserBalance">0 SHIB</span></p>
+                    <p>الإعلانات المشاهدة اليوم: <span id="resUserAds">0</span></p>
+                    <p>عدد السبين اليومي: <span id="resUserSpins">0</span></p>
+                    <p>حالة الحظر: <span id="resUserStatus">غير محظور ✅</span></p>
+
+                    <div class="edit-balance-group">
+                        <input type="number" id="newBalance" placeholder="الرصيد الجديد SHIB">
+                        <button class="update-btn" onclick="updateUserBalance()">تعديل الرصيد</button>
+                        <button class="action-btn reject-btn" id="resBanBtn" onclick="toggleBanUser()">حظر/إلغاء الحظر</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="content-section" id="tasks-section">
+            <h3 class="history-title">📝 المهام الحالية على الخادم</h3>
+            <div id="tasksListContainer">
+                <div class="no-records">جاري تحميل قائمة المهام...</div>
+            </div>
+        </div>
+        
+    </div>
+
+    <!-- Add Task Modal -->
+    <div class="modal-overlay" id="addTaskModal">
+        <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="addTaskTitle">
+            <div class="modal-header">
+                <div class="modal-title" id="addTaskTitle">إضافة مهمة جديدة إلى الخادم</div>
+                <button class="modal-close" onclick="closeAddTaskModal()">✖</button>
+            </div>
+
+            <div class="modal-form" id="addTaskForm">
+                <div class="full">
+                    <label for="taskName">اسم المهمة (Name)</label>
+                    <input id="taskName" type="text" placeholder="مثال: Join earn Channel" />
+                </div>
+
+                <div class="full">
+                    <label for="taskLink">رابط المهمة (Link) - يجب أن يكون t.me/username</label>
+                    <input id="taskLink" type="text" placeholder="https://t.me/your_channel" />
+                </div>
+
+                <div>
+                    <label for="taskReward">الجائزة (Reward) - عدد SHIB</label>
+                    <input id="taskReward" type="number" min="0" placeholder="مثال: 100" />
+                </div>
+
+                <div>
+                    <label for="taskMax">الحد الأقصى للمشاركين (Max Participants)</label>
+                    <input id="taskMax" type="number" min="1" placeholder="مثال: 1000" />
+                </div>
+
+                <div class="full" style="margin-top:8px;">
+                    <label for="taskNote">ملاحظة (اختياري)</label>
+                    <textarea id="taskNote" rows="2" placeholder="ملاحظة داخلية عن المهمة (اختياري)"></textarea>
+                </div>
+
+                <div class="modal-actions full">
+                    <button class="btn-cancel" onclick="closeAddTaskModal()">إلغاء</button>
+                    <button class="btn-create" onclick="submitAddTask()">إنشاء المهمة ونشرها</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="customAlert" class="custom-alert-overlay">
+        <div class="custom-alert-box">
+            <div class="alert-icon" id="alertIcon"></div>
+            <div class="alert-title" id="alertTitle"></div>
+            <div class="alert-message" id="alertMessage"></div>
+            <button class="alert-close-btn" onclick="document.getElementById('customAlert').classList.remove('visible')">حسناً</button>
+        </div>
+    </div>
+
+    <script>
+        // إعدادات أساسية لعمل لوحة التحكم
+        const API_URL = '/api';
+        const customAlert = document.getElementById('customAlert');
+        const alertBox = customAlert.querySelector('.custom-alert-box');
+        const alertTitleEl = document.getElementById('alertTitle');
+        const alertMessageEl = document.getElementById('alertMessage');
+        const adminUserId = '7741750541'; // هذا هو معرّف المسؤول الوحيد المسموح له بالوصول
+
+        let tgUser = null;
+        let searchedUser = null; // لتخزين بيانات المستخدم الذي تم البحث عنه
+
+        // 1. وظيفة عرض التنبيهات (Custom Alert)
+        function showCustomAlert(title, message, type = "warning") {
+            const cleanMessage = message.replace(/(\r\n|\n|\r)/gm, "\n");
+            alertTitleEl.textContent = title;
+            alertMessageEl.textContent = cleanMessage;
+            alertBox.classList.remove("success", "error", "warning");
+            alertBox.classList.add(type);
+            customAlert.classList.add('visible');
+        }
+
+        // 2. معالجة بيانات الإطلاق من Telegram Mini App
+        Telegram.WebApp.ready();
+        if (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) {
+            tgUser = Telegram.WebApp.initDataUnsafe.user;
+        }
+
+        // 3. دالة جلب بيانات API (معدلة لـ Admin)
+        async function fetchApi(data) {
+            // تحقق من صلاحية المسؤولية قبل أي طلب
+            if (!tgUser || tgUser.id.toString() !== adminUserId) {
+                showCustomAlert('خطأ في الوصول', 'أنت لست مسؤولاً مخولاً. [CODE: NOT_ADMIN]', 'error');
+                return { ok: false, error: 'Not Admin' };
+            }
+            const initData = Telegram.WebApp.initData;
+            if (!initData) {
+                showCustomAlert('خطأ حرج!', 'بيانات الإطلاق مفقودة. يرجى إعادة تشغيل التطبيق. [CODE: ID_MS]', 'error');
+                return { ok: false, error: 'InitData missing' };
+            }
+            
+            if (typeof Telegram.WebApp.showProgress === 'function') Telegram.WebApp.showProgress();
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...data, user_id: tgUser.id, initData: initData })
+                });
+
+                if (typeof Telegram.WebApp.hideProgress === 'function') Telegram.WebApp.hideProgress();
+
+                const result = await response.json();
+
+                if (!response.ok || !result.ok) {
+                    const errorMsg = result.error || `خطأ في الخادم: ${response.status} ${response.statusText}`;
+                    showCustomAlert('فشلت العملية!', errorMsg, 'error');
+                    return { ok: false, error: errorMsg };
+                }
+
+                return result;
+
+            } catch (e) {
+                if (typeof Telegram.WebApp.hideProgress === 'function') Telegram.WebApp.hideProgress();
+                console.error(`General Fetch Error for type ${data.type}:`, e.message);
+                showCustomAlert('خطأ في الاتصال!', 'تعذر الاتصال بالخادم. يرجى التحقق من اتصالك بالإنترنت.', 'error');
+                return { ok: false, error: e.message };
+            }
+        }
+
+        // 4. دالة جلب معرّف العملية (Action ID)
+        async function requestActionId(actionType) {
+            const result = await fetchApi({ type: 'generateActionId', action_type: actionType });
+            return result.ok ? result.data.action_id : null;
+        }
+        
+        // 5. تحميل بيانات لوحة التحكم (السحوبات المعلقة)
+        async function loadAdminData() {
+            if (!tgUser || tgUser.id.toString() !== adminUserId) {
+                document.getElementById('pendingWithdrawalsList').innerHTML = '<div class="no-records">لا توجد صلاحية للوصول إلى لوحة التحكم.</div>';
+                return;
+            }
+
+            const result = await fetchApi({ type: 'getPendingWithdrawals' });
+            if (result.ok) {
+                displayPendingWithdrawals(result.data.pending_withdrawals || []);
+            } else {
+                displayPendingWithdrawals([]);
+            }
+
+            // Also load tasks list for the admin area
+            loadTasksList();
+        }
+
+        // 6. عرض طلبات السحب المعلقة
+        function displayPendingWithdrawals(requests) {
+            const listEl = document.getElementById('pendingWithdrawalsList');
+            if (!requests || requests.length === 0) {
+                listEl.innerHTML = '<div class="no-records">لا توجد طلبات سحب معلقة حالياً.</div>';
+                return;
+            }
+
+            let html = '';
+            requests.forEach(req => {
+                const dateOptions = { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' };
+                const formattedDate = new Date(req.created_at).toLocaleDateString('ar-EG', dateOptions).replace(',', ' -');
+                html += `
+                    <div class="admin-list-item" data-request-id="${req.id}">
+                        <div class="user-info-admin">
+                            <h4>معرّف المستخدم (ID): <span style="color: #ffc107;">${req.user_id}</span></h4>
+                            <p><span>المبلغ:</span> <span style="color: #dc3545;">${req.amount.toLocaleString()} SHIB</span></p>
+                            <p><span>معرّف Binance:</span> <span>${req.binance_id}</span></p>
+                            <p><span>تاريخ الطلب:</span> <span>${formattedDate}</span></p>
+                        </div>
+                        <div class="admin-actions">
+                            <button class="action-btn accept-btn" onclick="handleAdminAction('${req.id}','accept', '${req.user_id}')">قبول</button>
+                            <button class="action-btn reject-btn" onclick="handleAdminAction('${req.id}','reject', '${req.user_id}')">رفض</button>
+                            <button class="action-btn ban-btn" onclick="handleAdminAction('${req.id}','ban','${req.user_id}')">حظر</button>
+                        </div>
+                    </div>
+                `;
+            });
+
+            listEl.innerHTML = html;
+        }
+
+        // 7. معالجة إجراءات المسؤول (قبول/رفض/حظر)
+        async function handleAdminAction(requestId, action, userIdToBan = null) {
+            const actionId = await requestActionId('adminAction');
+            if (!actionId) return;
+
+            const result = await fetchApi({
+                type: 'adminAction',
+                request_id: action !== 'ban' ? requestId : undefined, // إرسال request_id فقط إذا لم يكن الإجراء حظر
+                action: action,
+                user_to_ban: action === 'ban' ? userIdToBan : undefined, // إرسال user_to_ban فقط إذا كان الإجراء حظر
+                action_id: actionId
+            });
+
+            if (result.ok) {
+                // إعادة تحميل بيانات السحوبات عند القبول/الرفض/الحظر
+                loadAdminData();
+                showCustomAlert('نجاح!', result.data.message || `تم تنفيذ الإجراء (${action}) بنجاح.`, 'success');
+            }
+        }
+        
+        // 8. البحث عن المستخدم
+        async function searchUser() {
+            const userId = document.getElementById('searchUserId').value.trim();
+            const userResultEl = document.getElementById('userResult');
+            userResultEl.style.display = 'none';
+            searchedUser = null;
+
+            if (!userId) {
+                return showCustomAlert('تنبيه!', 'يرجى إدخال معرّف المستخدم.', 'warning');
+            }
+            
+            const actionId = await requestActionId('searchUser');
+            if (!actionId) return;
+
+            // تم تحديث fetchApi لـ searchUser لجلب ads_watched_today و spins_today
+            const result = await fetchApi({
+                type: 'searchUser', 
+                search_user_id: userId,
+                action_id: actionId
+            });
+
+            if (result.ok && result.data.user) {
+                searchedUser = result.data.user;
+                document.getElementById('resUserName').textContent = searchedUser.username || searchedUser.first_name || 'N/A';
+                document.getElementById('resUserId').textContent = searchedUser.user_id;
+                document.getElementById('resUserBalance').textContent = searchedUser.balance.toLocaleString() + ' SHIB';
+                
+                // NEW: Display Counters
+                document.getElementById('resUserAds').textContent = searchedUser.ads_watched_today.toLocaleString();
+                document.getElementById('resUserSpins').textContent = searchedUser.spins_today.toLocaleString();
+                
+                document.getElementById('resUserStatus').textContent = searchedUser.is_banned ? 'محظور ❌' : 'غير محظور ✅';
+                
+                const banBtn = document.getElementById('resBanBtn');
+                banBtn.textContent = searchedUser.is_banned ? 'إلغاء الحظر' : 'حظر';
+                banBtn.classList.toggle('reject-btn', !searchedUser.is_banned); // يبقى الزر أحمر للحظر
+                banBtn.classList.toggle('accept-btn', searchedUser.is_banned); // يصبح أخضر لإلغاء الحظر
+                
+                document.getElementById('newBalance').value = searchedUser.balance;
+                userResultEl.style.display = 'block';
+                showCustomAlert('تم العثور على المستخدم!', `المستخدم ${searchedUser.user_id} جاهز للتعديل.`, 'success');
+
+            } else {
+                showCustomAlert('لم يتم العثور!', result.error || 'لم يتم العثور على مستخدم بالمعرّف المُدخل.', 'error');
+            }
+        }
+
+        // 9. تحديث رصيد المستخدم
+        async function updateUserBalance() {
+            if (!searchedUser) {
+                return showCustomAlert('تنبيه!', 'يرجى البحث عن مستخدم أولاً.', 'warning');
+            }
+
+            const newBalanceInput = document.getElementById('newBalance').value;
+            const newBalance = parseInt(newBalanceInput);
+
+            if (newBalanceInput === '') {
+                 return showCustomAlert('خطأ في الرصيد!', 'يرجى إدخال قيمة.', 'warning');
+            }
+            if (isNaN(newBalance) || newBalance < 0) {
+                return showCustomAlert('خطأ في الرصيد!', 'يرجى إدخال رصيد صحيح (رقم موجب).', 'warning');
+            }
+
+            const actionId = await requestActionId('updateBalance');
+            if (!actionId) return;
+
+            const result = await fetchApi({
+                type: 'updateBalance',
+                target_user_id: searchedUser.user_id,
+                new_balance: newBalance,
+                action_id: actionId
+            });
+
+            if (result.ok) {
+                searchedUser.balance = newBalance;
+                document.getElementById('resUserBalance').textContent = newBalance.toLocaleString() + ' SHIB';
+                showCustomAlert('نجاح!', `تم تحديث رصيد المستخدم ${searchedUser.user_id} إلى ${newBalance.toLocaleString()} SHIB.`, 'success');
+            }
+        }
+
+        // 10. تبديل حالة الحظر/إلغاء الحظر للمستخدم
+        async function toggleBanUser() {
+            if (!searchedUser) {
+                return showCustomAlert('تنبيه!', 'يرجى البحث عن مستخدم أولاً.', 'warning');
+            }
+            
+            const action = searchedUser.is_banned ? 'unban' : 'ban';
+            
+            const actionId = await requestActionId('toggleBan');
+            if (!actionId) return;
+
+            const result = await fetchApi({
+                type: 'toggleBan',
+                target_user_id: searchedUser.user_id,
+                action: action,
+                action_id: actionId
+            });
+
+            if (result.ok) {
+                searchedUser.is_banned = !searchedUser.is_banned;
+                document.getElementById('resUserStatus').textContent = searchedUser.is_banned ? 'محظور ❌' : 'غير محظور ✅';
+                
+                const banBtn = document.getElementById('resBanBtn');
+                banBtn.textContent = searchedUser.is_banned ? 'إلغاء الحظر' : 'حظر';
+                banBtn.classList.toggle('reject-btn', !searchedUser.is_banned);
+                banBtn.classList.toggle('accept-btn', searchedUser.is_banned);
+
+                showCustomAlert('نجاح!', `تم ${action === 'ban' ? 'حظر' : 'إلغاء حظر'} المستخدم ${searchedUser.user_id}.`, 'success');
+            }
+        }
+        
+        // 11. دالة تبديل الأقسام
+        function showSection(targetId, sourceElement) {
+            // إزالة حالة active من جميع الأزرار
+            document.querySelectorAll('.admin-nav .nav-btn').forEach(btn => btn.classList.remove('active'));
+            // إزالة حالة active من جميع الأقسام
+            document.querySelectorAll('.admin-screen .content-section').forEach(sec => sec.classList.remove('active'));
+            
+            // إضافة حالة active للزر والقسم المستهدف
+            sourceElement.classList.add('active');
+            document.getElementById(targetId).classList.add('active');
+            
+            // إذا كان القسم هو السحوبات، قم بإعادة تحميل البيانات
+            if (targetId === 'withdrawals-section') {
+                loadAdminData();
+            } else if (targetId === 'user-management-section') {
+                // مسح نتائج البحث عند التبديل
+                document.getElementById('userResult').style.display = 'none';
+                document.getElementById('searchUserId').value = '';
+                searchedUser = null;
+            } else if (targetId === 'tasks-section') {
+                loadTasksList();
+            }
+        }
+
+        // ------------------ Add Task Modal Functions ------------------
+
+        function openAddTaskModal() {
+            document.getElementById('addTaskModal').classList.add('visible');
+            // Reset fields
+            document.getElementById('taskName').value = '';
+            document.getElementById('taskLink').value = '';
+            document.getElementById('taskReward').value = '';
+            document.getElementById('taskMax').value = '';
+            document.getElementById('taskNote').value = '';
+        }
+
+        function closeAddTaskModal() {
+            document.getElementById('addTaskModal').classList.remove('visible');
+        }
+
+        async function submitAddTask() {
+            const name = document.getElementById('taskName').value.trim();
+            const link = document.getElementById('taskLink').value.trim();
+            const reward = parseFloat(document.getElementById('taskReward').value);
+            const max_participants = parseInt(document.getElementById('taskMax').value);
+            const note = document.getElementById('taskNote').value.trim();
+
+            if (!name) return showCustomAlert('خطأ!', 'يرجى إدخال اسم المهمة.', 'warning');
+            if (!link) return showCustomAlert('خطأ!', 'يرجى إدخال رابط المهمة.', 'warning');
+            if (isNaN(reward) || reward < 0) return showCustomAlert('خطأ!', 'يرجى إدخال قيمة جائزة صحيحة (رقم غير سالب).', 'warning');
+            if (isNaN(max_participants) || max_participants < 1) return showCustomAlert('خطأ!', 'يرجى إدخال حد مشاركين صحيح (رقم صحيح >= 1).', 'warning');
+
+            // request action id for security
+            const actionId = await requestActionId('createTask');
+            if (!actionId) return;
+
+            // Call API to create task on server
+            const payload = {
+                type: 'createTask',
+                name,
+                link,
+                reward,
+                max_participants,
+                note,
+                action_id: actionId
+            };
+
+            const res = await fetchApi(payload);
+            if (res.ok) {
+                closeAddTaskModal();
+                showCustomAlert('نجاح!', 'تم إنشاء المهمة بنجاح ونشرها على الخادم.', 'success');
+                // Refresh tasks list so admin sees new task
+                loadTasksList();
+            }
+        }
+
+        // ------------------ Tasks List Loading ------------------
+        async function loadTasksList() {
+            const container = document.getElementById('tasksListContainer');
+            container.innerHTML = '<div class="no-records">جاري تحميل قائمة المهام...</div>';
+            const actionId = await requestActionId('getTasksListAdmin');
+            if (!actionId) {
+                container.innerHTML = '<div class="no-records">فشل في جلب قائمة المهام ( تحقّق من الأذونات ).</div>';
+                return;
+            }
+
+            const res = await fetchApi({ type: 'getTasks', action_id: actionId });
+            if (!res.ok) {
+                container.innerHTML = '<div class="no-records">فشل في جلب قائمة المهام.</div>';
+                return;
+            }
+
+            const tasks = res.data.tasks || [];
+            if (tasks.length === 0) {
+                container.innerHTML = '<div class="no-records">لا توجد مهام حالياً.</div>';
+                return;
+            }
+
+            let html = '';
+            tasks.forEach(task => {
+                html += `
+                    <div class="admin-list-item" data-task-id="${task.task_id}">
+                        <div class="user-info-admin">
+                            <h4>${escapeHtml(task.name)} — <span style="color:#00aaff;">${task.reward} SHIB</span></h4>
+                            <p><span>Link:</span> <span>${escapeHtml(task.link)}</span></p>
+                            <p><span>Max Participants:</span> <span>${task.max_participants || '∞'}</span></p>
+                        </div>
+                        <div class="admin-actions">
+                            <button class="action-btn accept-btn" onclick="deleteTask(${task.task_id})">حذف</button>
+                            <button class="action-btn reject-btn" onclick="openEditTaskModal(${task.task_id})">تعديل</button>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+        }
+
+        // Escape helper to avoid accidental HTML injection in admin UI
+        function escapeHtml(str) {
+            if (!str && str !== 0) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        // Simple delete task function (asks server to remove task by id)
+        async function deleteTask(taskId) {
+            if (!confirm('هل أنت متأكد أنك تريد حذف هذه المهمة نهائياً؟')) return;
+            const actionId = await requestActionId('deleteTask');
+            if (!actionId) return;
+            const res = await fetchApi({ type: 'deleteTask', task_id: taskId, action_id: actionId });
+            if (res.ok) {
+                showCustomAlert('نجاح!', 'تم حذف المهمة.', 'success');
+                loadTasksList();
+            }
+        }
+
+        // Placeholder edit modal opener (keeping lightweight)
+        function openEditTaskModal(taskId) {
+            showCustomAlert('ملاحظة', 'ميزة التعديل قيد التطوير. يمكنك حذف المهمة ثم إنشاء واحدة جديدة.', 'warning');
+        }
+
+        // ------------------ When page loads ------------------
+        // عند تحميل الصفحة، تأكد من صلاحية المسؤول وتحميل البيانات
+        window.onload = function() {
+            if (tgUser && tgUser.id.toString() === adminUserId) {
+                // Show the default section (Withdrawals) and load data
+                const defaultButton = document.querySelector('.nav-btn[data-target="withdrawals-section"]');
+                if (defaultButton) {
+                    showSection('withdrawals-section', defaultButton);
+                } else {
+                    loadAdminData(); // Fallback if no button found
+                }
+            } else {
+                // إظهار رسالة عدم الصلاحية بتنسيق أفضل
+                document.getElementById('adminScreen').innerHTML = `
+                    <div class="admin-header">
+                        <h2 class="admin-title" style="color:#dc3545;">❌ رفض الوصول ❌</h2>
+                        <div class="admin-subtitle" style="color:#e0e0e0;">لا تملك صلاحيات المسؤول المطلوبة.</div>
+                    </div>
+                    <div class="content-section active" style="background:#4a4a4a;">
+                        <div class="no-records" style="color:#dc3545; font-weight:700;">يجب أن يكون معرّفك هو ${adminUserId} للوصول.</div>
+                    </div>
+                `;
+            }
+        };
+
+    </script>
+</body>
+</html>
