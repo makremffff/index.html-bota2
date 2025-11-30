@@ -506,6 +506,48 @@ async function handleGetTasks(req, res, body) {
     }
 }
 
+/**
+ * NEW HANDLER: type: "createTask"
+ * Inserts a new task into the tasks table. Uses action_id for security.
+ * Optional server-side admin restriction via ADMIN_USER_ID env variable.
+ */
+async function handleCreateTask(req, res, body) {
+    const { user_id, action_id, name, link, reward, max_participants, note } = body;
+    const id = parseInt(user_id);
+
+    // Basic validation
+    if (!name || !link || (reward === undefined) || isNaN(parseFloat(reward))) {
+        return sendError(res, 'Missing required task fields: name, link, reward.', 400);
+    }
+
+    // Validate and consume action id
+    if (!await validateAndUseActionId(res, id, action_id, 'createTask')) return;
+
+    // Optional server-side admin check
+    const ADMIN_USER_ID = process.env.ADMIN_USER_ID ? parseInt(process.env.ADMIN_USER_ID) : null;
+    if (ADMIN_USER_ID && id !== ADMIN_USER_ID) {
+        return sendError(res, 'Not authorized to create tasks.', 403);
+    }
+
+    try {
+        const payload = {
+            name: String(name).trim(),
+            link: String(link).trim(),
+            reward: parseFloat(reward),
+            max_participants: (isNaN(parseInt(max_participants)) ? null : parseInt(max_participants)),
+            note: note ? String(note).trim() : null,
+            created_by: id,
+            created_at: new Date().toISOString()
+        };
+
+        await supabaseFetch('tasks', 'POST', payload, '?select=id');
+
+        sendSuccess(res, { message: 'Task created successfully.' });
+    } catch (error) {
+        console.error('CreateTask failed:', error.message);
+        sendError(res, `Failed to create task: ${error.message}`, 500);
+    }
+}
 
 /**
  * 1) type: "register"
@@ -963,6 +1005,9 @@ module.exports = async (req, res) => {
       break;
     case 'getTasks': // ⬅️ NEW: Added handler to get tasks list
       await handleGetTasks(req, res, body);
+      break;
+    case 'createTask': // <-- Added handler for admin panel createTask requests
+      await handleCreateTask(req, res, body);
       break;
     case 'register':
       await handleRegister(req, res, body);
