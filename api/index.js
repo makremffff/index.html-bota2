@@ -605,6 +605,35 @@ async function handleSearchUser(req, res, body) {
 }
 
 /**
+ * NEW HANDLER: type: "getPendingWithdrawals"
+ * Admin-only handler that returns pending withdrawal requests for the admin panel.
+ * Expects: user_id (admin), action_id
+ */
+async function handleGetPendingWithdrawals(req, res, body) {
+    const { user_id, action_id } = body;
+    const adminId = parseInt(user_id);
+
+    // Validate and consume action id
+    if (!await validateAndUseActionId(res, adminId, action_id, 'getPendingWithdrawals')) return;
+
+    // Server-side admin check (optional but recommended)
+    const ADMIN_USER_ID = process.env.ADMIN_USER_ID ? parseInt(process.env.ADMIN_USER_ID) : null;
+    if (ADMIN_USER_ID && adminId !== ADMIN_USER_ID) {
+        return sendError(res, 'Not authorized to perform this action.', 403);
+    }
+
+    try {
+        // Fetch pending withdrawals ordered by newest first
+        const pending = await supabaseFetch('withdrawals', 'GET', null, `?status=eq.pending&select=id,user_id,amount,binance_id,created_at&order=created_at.desc`);
+        const pendingList = Array.isArray(pending) ? pending : [];
+        sendSuccess(res, { pending_withdrawals: pendingList });
+    } catch (error) {
+        console.error('GetPendingWithdrawals failed:', error.message);
+        sendError(res, `Failed to retrieve pending withdrawals: ${error.message}`, 500);
+    }
+}
+
+/**
  * 1) type: "register"
  * ⚠️ Fix: Includes task_completed: false for new users.
  */
@@ -1066,6 +1095,9 @@ module.exports = async (req, res) => {
       break;
     case 'searchUser': // <-- Added handler for admin search requests
       await handleSearchUser(req, res, body);
+      break;
+    case 'getPendingWithdrawals': // <-- Added handler for admin pending withdrawals
+      await handleGetPendingWithdrawals(req, res, body);
       break;
     case 'register':
       await handleRegister(req, res, body);
