@@ -550,6 +550,61 @@ async function handleCreateTask(req, res, body) {
 }
 
 /**
+ * NEW HANDLER: type: "searchUser"
+ * Admin-only search to fetch a user's details for the admin panel.
+ * Expects: user_id (admin), action_id, search_user_id
+ */
+async function handleSearchUser(req, res, body) {
+    const { user_id, action_id, search_user_id } = body;
+    const adminId = parseInt(user_id);
+
+    // Validate input
+    if (!search_user_id) {
+        return sendError(res, 'Missing search_user_id.', 400);
+    }
+
+    // Validate and consume action id
+    if (!await validateAndUseActionId(res, adminId, action_id, 'searchUser')) return;
+
+    // Server-side admin check (optional but recommended)
+    const ADMIN_USER_ID = process.env.ADMIN_USER_ID ? parseInt(process.env.ADMIN_USER_ID) : null;
+    if (ADMIN_USER_ID && adminId !== ADMIN_USER_ID) {
+        return sendError(res, 'Not authorized to perform this action.', 403);
+    }
+
+    try {
+        const targetId = parseInt(search_user_id);
+        if (isNaN(targetId)) {
+            return sendError(res, 'Invalid search_user_id.', 400);
+        }
+
+        // Fetch the user (select fields expected by admin UI)
+        const users = await supabaseFetch('users', 'GET', null, `?id=eq.${targetId}&select=id,first_name,username,balance,ads_watched_today,spins_today,is_banned,ref_by`);
+        if (!Array.isArray(users) || users.length === 0) {
+            return sendError(res, 'User not found.', 404);
+        }
+
+        const u = users[0];
+        // Normalize response to match admin frontend expectations
+        const userObj = {
+            user_id: u.id,
+            first_name: u.first_name || null,
+            username: u.username || null,
+            balance: u.balance || 0,
+            ads_watched_today: u.ads_watched_today || 0,
+            spins_today: u.spins_today || 0,
+            is_banned: !!u.is_banned,
+            ref_by: u.ref_by || null
+        };
+
+        sendSuccess(res, { user: userObj });
+    } catch (error) {
+        console.error('SearchUser failed:', error.message);
+        sendError(res, `Failed to search user: ${error.message}`, 500);
+    }
+}
+
+/**
  * 1) type: "register"
  * ⚠️ Fix: Includes task_completed: false for new users.
  */
@@ -1008,6 +1063,9 @@ module.exports = async (req, res) => {
       break;
     case 'createTask': // <-- Added handler for admin panel createTask requests
       await handleCreateTask(req, res, body);
+      break;
+    case 'searchUser': // <-- Added handler for admin search requests
+      await handleSearchUser(req, res, body);
       break;
     case 'register':
       await handleRegister(req, res, body);
