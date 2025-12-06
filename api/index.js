@@ -1,4 +1,3 @@
-
 // /api/index.js
 // Full backend with ADMIN_USER_ID hardcoded for admin-only endpoints (bypass action_id).
 // NOTE: This file includes an embedded ADMIN_USER_ID (trusted single admin).
@@ -26,6 +25,8 @@ const RESET_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const MIN_TIME_BETWEEN_ACTIONS_MS = 3000; // 3s
 const ACTION_ID_EXPIRY_MS = 60000; // 60s
 const SPIN_SECTORS = [5, 10, 15, 20, 5];
+// NEW: Minimum interval between completing ANY task (especially bot tasks)
+const MIN_TASK_COMPLETION_INTERVAL_MS = 5000; // 5 seconds cooldown
 
 const TASK_COMPLETIONS_TABLE = 'user_task_completions';
 
@@ -197,6 +198,20 @@ function validateInitData(initData) {
   const authDate = parseInt(authDateParam) * 1000;
   if (Date.now() - authDate > 20 * 60 * 1000) return false;
   return true;
+}
+
+// Placeholder for processCommission and resetDailyLimitsIfExpired (ensure these are present in the full backend implementation)
+async function processCommission(referrerId, completedUserId, reward) {
+  // Implement commission processing logic here (e.g., fetch referrer, calculate commission, update referrer balance, log transaction)
+}
+
+async function resetDailyLimitsIfExpired(userId) {
+  // Implement logic to reset ads_watched_today and spins_today based on RESET_INTERVAL_MS
+}
+
+async function checkRateLimit(userId) {
+  // Implement logic to check MIN_TIME_BETWEEN_ACTIONS_MS
+  return { ok: true }; // Placeholder for successful check
 }
 
 // --- API Handlers ---
@@ -437,7 +452,7 @@ async function handleAdminAction(req, res, body) {
   }
 }
 
-// Register / Watch / Spin / CompleteTask / Withdraw handlers are below (withdraw already defined)
+// Register / Watch / Spin / CompleteTask / Withdraw handlers
 async function handleRegister(req, res, body) {
   const { user_id, ref_by } = body;
   const id = parseInt(user_id);
@@ -535,7 +550,16 @@ async function handleCompleteTask(req, res, body) {
   if (!await validateAndUseActionId(res, id, action_id, `completeTask_${taskId}`)) return;
 
   try {
-    // تم تحديث SELECT لجلب حقل 'type'
+    // 1. تحقق من الحد الزمني لآخر مهمة مكتملة
+    const lastCompletionRecords = await supabaseFetch(TASK_COMPLETIONS_TABLE, 'GET', null, `?user_id=eq.${id}&select=created_at&order=created_at.desc&limit=1`);
+    if (Array.isArray(lastCompletionRecords) && lastCompletionRecords.length > 0) {
+      const lastCompletionTime = new Date(lastCompletionRecords[0].created_at).getTime();
+      if (Date.now() - lastCompletionTime < MIN_TASK_COMPLETION_INTERVAL_MS) {
+        return sendError(res, `Please wait ${MIN_TASK_COMPLETION_INTERVAL_MS / 1000} seconds between completing tasks.`, 429);
+      }
+    }
+
+    // 2. جلب بيانات المهمة
     const tasks = await supabaseFetch('tasks', 'GET', null, `?id=eq.${taskId}&select=link,reward,max_participants,type`);
     if (!Array.isArray(tasks) || tasks.length === 0) return sendError(res, 'Task not found.', 404);
     const task = tasks[0];
@@ -543,13 +567,18 @@ async function handleCompleteTask(req, res, body) {
     const taskLink = task.link;
     const taskType = task.type || 'channel'; // الافتراضي هو 'channel'
 
+    // 3. التحقق مما إذا كانت المهمة قد اكتملت مسبقًا
     const completions = await supabaseFetch(TASK_COMPLETIONS_TABLE, 'GET', null, `?user_id=eq.${id}&task_id=eq.${taskId}&select=id`);
     if (Array.isArray(completions) && completions.length > 0) return sendError(res, 'Task already completed by this user.', 403);
 
+    // 4. التحقق من حدود المعدل العامة وحالة الحظر
     const rateLimitResult = await checkRateLimit(id);
     if (!rateLimitResult.ok) return sendError(res, rateLimitResult.message, 429);
+    const users = await supabaseFetch('users', 'GET', null, `?id=eq.${id}&select=balance,ref_by,is_banned`);
+    const user = users[0];
+    if (user.is_banned) return sendError(res, 'User is banned.', 403);
     
-    // منطق التحقق المعدل: التحقق من الانضمام فقط إذا لم يكن نوع المهمة 'bot'
+    // 5. التحقق من الانضمام (يتم تخطيه إذا كان نوع المهمة 'bot')
     if (taskType !== 'bot') {
         const channelUsernameMatch = taskLink.match(/t\.me\/([a-zA-Z0-9_]+)/);
         if (!channelUsernameMatch) return sendError(res, 'Task verification failed: The link is not a supported Telegram channel format for join tasks.', 400);
@@ -557,12 +586,9 @@ async function handleCompleteTask(req, res, body) {
         const isMember = await checkChannelMembership(id, channelUsername);
         if (!isMember) return sendError(res, `User has not joined the required channel: ${channelUsername}`, 400);
     }
-    // إذا كان taskType === 'bot'، فسيتم تخطي التحقق من الانضمام تلقائيًا.
+    // ملاحظة: إذا كان taskType === 'bot'، يتم تخطي التحقق من الانضمام تلقائيًا.
 
-    const users = await supabaseFetch('users', 'GET', null, `?id=eq.${id}&select=balance,ref_by,is_banned`);
-    const user = users[0];
-    if (user.is_banned) return sendError(res, 'User is banned.', 403);
-
+    // 6. منح الجائزة وتحديث السجلات
     const referrerId = user.ref_by;
     const newBalance = user.balance + reward;
     await supabaseFetch('users', 'PATCH', { balance: newBalance, last_activity: new Date().toISOString() }, `?id=eq.${id}`);
@@ -573,20 +599,6 @@ async function handleCompleteTask(req, res, body) {
     console.error('CompleteTask failed:', error.message);
     sendError(res, `Failed to complete task: ${error.message}`, 500);
   }
-}
-
-// Placeholder for processCommission and resetDailyLimitsIfExpired (ensure these are present in the full backend implementation)
-async function processCommission(referrerId, completedUserId, reward) {
-    // Implement commission processing logic here (e.g., fetch referrer, calculate commission, update referrer balance, log transaction)
-}
-
-async function resetDailyLimitsIfExpired(userId) {
-    // Implement logic to reset ads_watched_today and spins_today based on RESET_INTERVAL_MS
-}
-
-async function checkRateLimit(userId) {
-    // Implement logic to check MIN_TIME_BETWEEN_ACTIONS_MS
-    return { ok: true }; // Placeholder for successful check
 }
 
 
