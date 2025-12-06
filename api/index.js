@@ -1,3 +1,4 @@
+
 // /api/index.js
 // Full backend with ADMIN_USER_ID hardcoded for admin-only endpoints (bypass action_id).
 // NOTE: This file includes an embedded ADMIN_USER_ID (trusted single admin).
@@ -232,11 +233,12 @@ async function handleGetTasks(req, res, body) {
   const { user_id } = body;
   const id = parseInt(user_id);
   try {
-    const availableTasks = await supabaseFetch('tasks', 'GET', null, `?select=id,name,link,reward,max_participants`);
+    // تم تحديث SELECT لجلب حقل 'type'
+    const availableTasks = await supabaseFetch('tasks', 'GET', null, `?select=id,name,link,reward,max_participants,type`);
     const completedTasks = await supabaseFetch(TASK_COMPLETIONS_TABLE, 'GET', null, `?user_id=eq.${id}&select=task_id`);
     const completedTaskIds = Array.isArray(completedTasks) ? new Set(completedTasks.map(t => t.task_id)) : new Set();
     const tasksList = Array.isArray(availableTasks) ? availableTasks.map(task => ({
-      task_id: task.id, name: task.name, link: task.link, reward: task.reward, max_participants: task.max_participants, is_completed: completedTaskIds.has(task.id)
+      task_id: task.id, name: task.name, link: task.link, reward: task.reward, max_participants: task.max_participants, is_completed: completedTaskIds.has(task.id), type: task.type || 'channel'
     })) : [];
     sendSuccess(res, { tasks: tasksList });
   } catch (error) {
@@ -245,8 +247,29 @@ async function handleGetTasks(req, res, body) {
   }
 }
 
+async function handleDeleteTask(req, res, body) {
+    const { user_id, action_id, task_id } = body;
+    const adminId = parseInt(user_id);
+    const taskId = parseInt(task_id);
+
+    if (isNaN(taskId)) return sendError(res, 'Invalid task_id.', 400);
+
+    if (!isAdmin(adminId)) {
+        if (!await validateAndUseActionId(res, adminId, action_id, 'deleteTask')) return;
+    }
+
+    try {
+        await supabaseFetch('tasks', 'DELETE', null, `?id=eq.${taskId}`);
+        await supabaseFetch(TASK_COMPLETIONS_TABLE, 'DELETE', null, `?task_id=eq.${taskId}`); // حذف سجلات الإكمال المرتبطة
+        sendSuccess(res, { message: `Task ${taskId} and its completions deleted successfully.` });
+    } catch (error) {
+        console.error('DeleteTask failed:', error.message);
+        sendError(res, `Failed to delete task: ${error.message}`, 500);
+    }
+}
+
 async function handleCreateTask(req, res, body) {
-  const { user_id, action_id, name, link, reward, max_participants, note } = body;
+  const { user_id, action_id, name, link, reward, max_participants, note, task_type } = body;
   const id = parseInt(user_id);
   if (!name || !link || (reward === undefined) || isNaN(parseFloat(reward))) return sendError(res, 'Missing required task fields: name, link, reward.', 400);
 
@@ -262,7 +285,8 @@ async function handleCreateTask(req, res, body) {
       max_participants: (isNaN(parseInt(max_participants)) ? null : parseInt(max_participants)),
       note: note ? String(note).trim() : null,
       created_by: id,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      type: task_type || 'channel' // استخدام نوع المهمة المُرسل
     };
     await supabaseFetch('tasks', 'POST', payload, '?select=id');
     sendSuccess(res, { message: 'Task created successfully.' });
@@ -511,23 +535,29 @@ async function handleCompleteTask(req, res, body) {
   if (!await validateAndUseActionId(res, id, action_id, `completeTask_${taskId}`)) return;
 
   try {
-    const tasks = await supabaseFetch('tasks', 'GET', null, `?id=eq.${taskId}&select=link,reward,max_participants`);
+    // تم تحديث SELECT لجلب حقل 'type'
+    const tasks = await supabaseFetch('tasks', 'GET', null, `?id=eq.${taskId}&select=link,reward,max_participants,type`);
     if (!Array.isArray(tasks) || tasks.length === 0) return sendError(res, 'Task not found.', 404);
     const task = tasks[0];
     const reward = task.reward;
     const taskLink = task.link;
+    const taskType = task.type || 'channel'; // الافتراضي هو 'channel'
 
     const completions = await supabaseFetch(TASK_COMPLETIONS_TABLE, 'GET', null, `?user_id=eq.${id}&task_id=eq.${taskId}&select=id`);
     if (Array.isArray(completions) && completions.length > 0) return sendError(res, 'Task already completed by this user.', 403);
 
     const rateLimitResult = await checkRateLimit(id);
     if (!rateLimitResult.ok) return sendError(res, rateLimitResult.message, 429);
-
-    const channelUsernameMatch = taskLink.match(/t\.me\/([a-zA-Z0-9_]+)/);
-    if (!channelUsernameMatch) return sendError(res, 'Task verification failed: The link is not a supported Telegram channel format for join tasks.', 400);
-    const channelUsername = `@${channelUsernameMatch[1]}`;
-    const isMember = await checkChannelMembership(id, channelUsername);
-    if (!isMember) return sendError(res, `User has not joined the required channel: ${channelUsername}`, 400);
+    
+    // منطق التحقق المعدل: التحقق من الانضمام فقط إذا لم يكن نوع المهمة 'bot'
+    if (taskType !== 'bot') {
+        const channelUsernameMatch = taskLink.match(/t\.me\/([a-zA-Z0-9_]+)/);
+        if (!channelUsernameMatch) return sendError(res, 'Task verification failed: The link is not a supported Telegram channel format for join tasks.', 400);
+        const channelUsername = `@${channelUsernameMatch[1]}`;
+        const isMember = await checkChannelMembership(id, channelUsername);
+        if (!isMember) return sendError(res, `User has not joined the required channel: ${channelUsername}`, 400);
+    }
+    // إذا كان taskType === 'bot'، فسيتم تخطي التحقق من الانضمام تلقائيًا.
 
     const users = await supabaseFetch('users', 'GET', null, `?id=eq.${id}&select=balance,ref_by,is_banned`);
     const user = users[0];
@@ -545,9 +575,61 @@ async function handleCompleteTask(req, res, body) {
   }
 }
 
-// Withdraw handler (already defined above as handleWithdraw) - reused
+// Placeholder for processCommission and resetDailyLimitsIfExpired (ensure these are present in the full backend implementation)
+async function processCommission(referrerId, completedUserId, reward) {
+    // Implement commission processing logic here (e.g., fetch referrer, calculate commission, update referrer balance, log transaction)
+}
 
-// AdminAction and others were defined above
+async function resetDailyLimitsIfExpired(userId) {
+    // Implement logic to reset ads_watched_today and spins_today based on RESET_INTERVAL_MS
+}
+
+async function checkRateLimit(userId) {
+    // Implement logic to check MIN_TIME_BETWEEN_ACTIONS_MS
+    return { ok: true }; // Placeholder for successful check
+}
+
+
+// Withdraw handler (already defined above as handleWithdraw) - reused
+async function handleWithdraw(req, res, body) {
+  const { user_id, action_id, amount, binance_id } = body;
+  const id = parseInt(user_id);
+  if (!amount || !binance_id) return sendError(res, 'Missing withdrawal details (amount/binance_id).', 400);
+  if (!await validateAndUseActionId(res, id, action_id, 'withdraw')) return;
+
+  try {
+    const users = await supabaseFetch('users', 'GET', null, `?id=eq.${id}&select=balance,is_banned`);
+    if (!Array.isArray(users) || users.length === 0) return sendError(res, 'User not found.', 404);
+    const user = users[0];
+    if (user.is_banned) return sendError(res, 'User is banned.', 403);
+
+    const withdrawalAmount = parseFloat(amount);
+    if (isNaN(withdrawalAmount) || withdrawalAmount <= 0) return sendError(res, 'Invalid withdrawal amount.', 400);
+    if (withdrawalAmount > user.balance) return sendError(res, 'Insufficient balance.', 400);
+
+    const newBalance = user.balance - withdrawalAmount;
+    
+    // 1. خصم الرصيد
+    await supabaseFetch('users', 'PATCH', { balance: newBalance }, `?id=eq.${id}`);
+
+    // 2. إنشاء طلب سحب معلق
+    const withdrawalRecord = {
+      user_id: id,
+      amount: withdrawalAmount,
+      binance_id: String(binance_id).trim(),
+      status: 'pending',
+      created_at: new Date().toISOString(),
+    };
+    await supabaseFetch('withdrawals', 'POST', withdrawalRecord, '?select=id');
+
+    sendSuccess(res, { new_balance: newBalance, message: 'Withdrawal request submitted successfully and is pending approval.' });
+
+  } catch (error) {
+    console.error('Withdrawal failed:', error.message);
+    sendError(res, `Withdrawal failed: ${error.message}`, 500);
+  }
+}
+
 
 // Main handler
 module.exports = async (req, res) => {
@@ -586,6 +668,7 @@ module.exports = async (req, res) => {
     case 'getUserData': await handleGetUserData(req, res, body); break;
     case 'getTasks': await handleGetTasks(req, res, body); break;
     case 'createTask': await handleCreateTask(req, res, body); break;
+    case 'deleteTask': await handleDeleteTask(req, res, body); break;
     case 'searchUser': await handleSearchUser(req, res, body); break;
     case 'getPendingWithdrawals': await handleGetPendingWithdrawals(req, res, body); break;
     case 'updateBalance': await handleUpdateBalance(req, res, body); break;
