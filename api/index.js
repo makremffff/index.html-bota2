@@ -565,7 +565,8 @@ async function handleCompleteTask(req, res, body) {
     const task = tasks[0];
     const reward = task.reward;
     const taskLink = task.link;
-    const taskType = task.type || 'channel'; // الافتراضي هو 'channel'
+    // 🛑 التعديل الأول: ضمان أن النوع هو 'bot' أو 'channel' وأن يكون كله أحرف صغيرة وبدون مسافات
+    const taskType = (task.type || 'bot').trim().toLowerCase(); 
 
     // 3. التحقق مما إذا كانت المهمة قد اكتملت مسبقًا
     const completions = await supabaseFetch(TASK_COMPLETIONS_TABLE, 'GET', null, `?user_id=eq.${id}&task_id=eq.${taskId}&select=id`);
@@ -578,16 +579,18 @@ async function handleCompleteTask(req, res, body) {
     const user = users[0];
     if (user.is_banned) return sendError(res, 'User is banned.', 403);
     
-    // 5. التحقق من الانضمام (يتم تخطيه إذا كان نوع المهمة 'bot' أو 'join_no_check')
-    if (taskType === 'channel') { // التعديل هنا: التحقق فقط إذا كان type هو 'channel'
+    // 🛑 التعديل الثاني: استخدام متغير منطقي للتحقق الدقيق
+    const shouldCheckMembership = (taskType === 'channel');
+
+    // 5. التحقق من الانضمام (يتم تخطيه إذا كانت shouldCheckMembership خاطئة)
+    if (shouldCheckMembership) {
         const channelUsernameMatch = taskLink.match(/t\.me\/([a-zA-Z0-9_]+)/);
         if (!channelUsernameMatch) return sendError(res, 'Task verification failed: The link is not a supported Telegram channel format for join tasks.', 400);
         const channelUsername = `@${channelUsernameMatch[1]}`;
         const isMember = await checkChannelMembership(id, channelUsername);
         if (!isMember) return sendError(res, `User has not joined the required channel: ${channelUsername}`, 400);
     }
-    // إذا كان taskType === 'bot'، فسيتم تخطي كتلة التحقق أعلاه.
-
+    
     // 6. منح الجائزة وتحديث السجلات
     const referrerId = user.ref_by;
     const newBalance = user.balance + reward;
