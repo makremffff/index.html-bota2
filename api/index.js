@@ -248,12 +248,12 @@ async function handleGetTasks(req, res, body) {
   const { user_id } = body;
   const id = parseInt(user_id);
   try {
-    // تم تحديث SELECT لجلب حقل 'type'
-    const availableTasks = await supabaseFetch('tasks', 'GET', null, `?select=id,name,link,reward,max_participants,type`);
+    // تم تحديث SELECT لجلب حقل 'type' و 'no_verification'
+    const availableTasks = await supabaseFetch('tasks', 'GET', null, `?select=id,name,link,reward,max_participants,type,no_verification,skip_verification`);
     const completedTasks = await supabaseFetch(TASK_COMPLETIONS_TABLE, 'GET', null, `?user_id=eq.${id}&select=task_id`);
     const completedTaskIds = Array.isArray(completedTasks) ? new Set(completedTasks.map(t => t.task_id)) : new Set();
     const tasksList = Array.isArray(availableTasks) ? availableTasks.map(task => ({
-      task_id: task.id, name: task.name, link: task.link, reward: task.reward, max_participants: task.max_participants, is_completed: completedTaskIds.has(task.id), type: task.type || 'channel'
+      task_id: task.id, name: task.name, link: task.link, reward: task.reward, max_participants: task.max_participants, is_completed: completedTaskIds.has(task.id), type: task.type || 'channel', no_verification: !!task.no_verification || !!task.skip_verification
     })) : [];
     sendSuccess(res, { tasks: tasksList });
   } catch (error) {
@@ -284,7 +284,7 @@ async function handleDeleteTask(req, res, body) {
 }
 
 async function handleCreateTask(req, res, body) {
-  const { user_id, action_id, name, link, reward, max_participants, note, task_type } = body;
+  const { user_id, action_id, name, link, reward, max_participants, note, task_type, no_verification, skip_verification } = body;
   const id = parseInt(user_id);
   if (!name || !link || (reward === undefined) || isNaN(parseFloat(reward))) return sendError(res, 'Missing required task fields: name, link, reward.', 400);
 
@@ -301,7 +301,8 @@ async function handleCreateTask(req, res, body) {
       note: note ? String(note).trim() : null,
       created_by: id,
       created_at: new Date().toISOString(),
-      type: task_type || 'channel' // استخدام نوع المهمة المُرسل
+      type: task_type || 'channel', // استخدام نوع المهمة المُرسل
+      no_verification: !!no_verification || !!skip_verification
     };
     await supabaseFetch('tasks', 'POST', payload, '?select=id');
     sendSuccess(res, { message: 'Task created successfully.' });
@@ -549,8 +550,8 @@ async function handleCompleteTask(req, res, body) {
   if (isNaN(taskId)) return sendError(res, 'Missing or invalid task_id.', 400);
 
   try {
-    // Fetch task first to determine its type
-    const tasks = await supabaseFetch('tasks', 'GET', null, `?id=eq.${taskId}&select=link,reward,max_participants,type`);
+    // Fetch task first to determine its type and flags
+    const tasks = await supabaseFetch('tasks', 'GET', null, `?id=eq.${taskId}&select=link,reward,max_participants,type,no_verification,skip_verification`);
     if (!Array.isArray(tasks) || tasks.length === 0) return sendError(res, 'Task not found.', 404);
     const task = tasks[0];
     const reward = task.reward;
@@ -558,9 +559,11 @@ async function handleCompleteTask(req, res, body) {
     // Ensure type normalized
     const taskType = (task.type || 'bot').trim().toLowerCase();
 
-    // IMPORTANT CHANGE:
-    // If task type is 'bot' we SKIP the action_id validation entirely so bot tasks can be completed without that security token.
-    // For non-bot tasks we require the server token as before.
+    // Determine if this task explicitly requests skipping verification
+    const skipVerificationFlag = !!task.no_verification || !!task.skip_verification;
+
+    // IMPORTANT: If task type is NOT 'bot' we normally require action_id.
+    // For 'bot' tasks we skip action_id validation (so client doesn't need to send it).
     if (taskType !== 'bot') {
       if (!await validateAndUseActionId(res, id, action_id, `completeTask_${taskId}`)) return;
     }
@@ -585,15 +588,22 @@ async function handleCompleteTask(req, res, body) {
     const user = users[0];
     if (user.is_banned) return sendError(res, 'User is banned.', 403);
 
-    // For channel tasks, verify membership. For 'bot' tasks, we intentionally skip any external verification.
-    const shouldCheckMembership = (taskType === 'channel');
+    // Decide whether to check membership:
+    // - Only consider membership check when task.type === 'channel'
+    // - If task has no_verification/skip_verification flag, skip it
+    let shouldCheckMembership = (taskType === 'channel') && !skipVerificationFlag;
 
     if (shouldCheckMembership) {
-        const channelUsernameMatch = taskLink.match(/t\.me\/([a-zA-Z0-9_]+)/);
-        if (!channelUsernameMatch) return sendError(res, 'Task verification failed: The link is not a supported Telegram channel format for join tasks.', 400);
-        const channelUsername = `@${channelUsernameMatch[1]}`;
-        const isMember = await checkChannelMembership(id, channelUsername);
-        if (!isMember) return sendError(res, `User has not joined the required channel: ${channelUsername}`, 400);
+        // Accept t.me and telegram.me links (handles https variants too)
+        const channelUsernameMatch = taskLink.match(/(?:t\.me|telegram\.me)\/([a-zA-Z0-9_]+)/);
+        if (!channelUsernameMatch) {
+            // If link isn't a recognized channel URL format, skip membership verification
+            console.warn(`Task ${taskId} has channel type but link isn't t.me/telegram.me format. Skipping membership check.`);
+        } else {
+            const channelUsername = `@${channelUsernameMatch[1]}`;
+            const isMember = await checkChannelMembership(id, channelUsername);
+            if (!isMember) return sendError(res, `User has not joined the required channel: ${channelUsername}`, 400);
+        }
     }
 
     // 6. منح الجائزة وتحديث السجلات
