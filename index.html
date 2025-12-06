@@ -534,7 +534,7 @@
             display: block;
         }
 
-        .modal-form input, .modal-form textarea {
+        .modal-form input, .modal-form textarea, .modal-form select {
             width: 100%;
             padding: 10px;
             border-radius: 8px;
@@ -676,7 +676,6 @@
         
     </div>
 
-    <!-- Add Task Modal -->
     <div class="modal-overlay" id="addTaskModal">
         <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="addTaskTitle">
             <div class="modal-header">
@@ -694,7 +693,14 @@
                     <label for="taskLink">رابط المهمة (Link) - يجب أن يكون t.me/username</label>
                     <input id="taskLink" type="text" placeholder="https://t.me/your_channel" />
                 </div>
-
+                
+                <div class="full">
+                    <label for="taskType">نوع المهمة (Type) - للتحقق</label>
+                    <select id="taskType">
+                        <option value="channel">انضمام لقناة/مجموعة (يتطلب تحقق)</option>
+                        <option value="bot">بدء/انضمام لبوت (لا يتطلب تحقق الانضمام)</option>
+                    </select>
+                </div>
                 <div>
                     <label for="taskReward">الجائزة (Reward) - عدد SHIB</label>
                     <input id="taskReward" type="number" min="0" placeholder="مثال: 100" />
@@ -1018,6 +1024,7 @@
             document.getElementById('taskReward').value = '';
             document.getElementById('taskMax').value = '';
             document.getElementById('taskNote').value = '';
+            document.getElementById('taskType').value = 'channel'; // Reset type to default
         }
 
         function closeAddTaskModal() {
@@ -1030,6 +1037,9 @@
             const reward = parseFloat(document.getElementById('taskReward').value);
             const max_participants = parseInt(document.getElementById('taskMax').value);
             const note = document.getElementById('taskNote').value.trim();
+            // جلب نوع المهمة الجديد
+            const type = document.getElementById('taskType').value;
+
 
             if (!name) return showCustomAlert('خطأ!', 'يرجى إدخال اسم المهمة.', 'warning');
             if (!link) return showCustomAlert('خطأ!', 'يرجى إدخال رابط المهمة.', 'warning');
@@ -1048,6 +1058,7 @@
                 reward,
                 max_participants,
                 note,
+                task_type: type, // إرسال نوع المهمة
                 action_id: actionId
             };
 
@@ -1084,10 +1095,12 @@
 
             let html = '';
             tasks.forEach(task => {
+                const taskTypeDisplay = task.type === 'bot' ? 'بوت 🤖' : 'قناة/مجموعة 📢'; // عرض نوع المهمة
                 html += `
                     <div class="admin-list-item" data-task-id="${task.task_id}">
                         <div class="user-info-admin">
                             <h4>${escapeHtml(task.name)} — <span style="color:#00aaff;">${task.reward} SHIB</span></h4>
+                            <p><span>النوع:</span> <span style="color:#ffc107;">${taskTypeDisplay}</span></p>
                             <p><span>Link:</span> <span>${escapeHtml(task.link)}</span></p>
                             <p><span>Max Participants:</span> <span>${task.max_participants || '∞'}</span></p>
                         </div>
