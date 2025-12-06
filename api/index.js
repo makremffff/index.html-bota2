@@ -547,9 +547,24 @@ async function handleCompleteTask(req, res, body) {
   const id = parseInt(user_id);
   const taskId = parseInt(task_id);
   if (isNaN(taskId)) return sendError(res, 'Missing or invalid task_id.', 400);
-  if (!await validateAndUseActionId(res, id, action_id, `completeTask_${taskId}`)) return;
 
   try {
+    // Fetch task first to determine its type
+    const tasks = await supabaseFetch('tasks', 'GET', null, `?id=eq.${taskId}&select=link,reward,max_participants,type`);
+    if (!Array.isArray(tasks) || tasks.length === 0) return sendError(res, 'Task not found.', 404);
+    const task = tasks[0];
+    const reward = task.reward;
+    const taskLink = task.link;
+    // Ensure type normalized
+    const taskType = (task.type || 'bot').trim().toLowerCase();
+
+    // IMPORTANT CHANGE:
+    // If task type is 'bot' we SKIP the action_id validation entirely so bot tasks can be completed without that security token.
+    // For non-bot tasks we require the server token as before.
+    if (taskType !== 'bot') {
+      if (!await validateAndUseActionId(res, id, action_id, `completeTask_${taskId}`)) return;
+    }
+
     // 1. تحقق من الحد الزمني لآخر مهمة مكتملة
     const lastCompletionRecords = await supabaseFetch(TASK_COMPLETIONS_TABLE, 'GET', null, `?user_id=eq.${id}&select=created_at&order=created_at.desc&limit=1`);
     if (Array.isArray(lastCompletionRecords) && lastCompletionRecords.length > 0) {
@@ -558,15 +573,6 @@ async function handleCompleteTask(req, res, body) {
         return sendError(res, `Please wait ${MIN_TASK_COMPLETION_INTERVAL_MS / 1000} seconds between completing tasks.`, 429);
       }
     }
-
-    // 2. جلب بيانات المهمة
-    const tasks = await supabaseFetch('tasks', 'GET', null, `?id=eq.${taskId}&select=link,reward,max_participants,type`);
-    if (!Array.isArray(tasks) || tasks.length === 0) return sendError(res, 'Task not found.', 404);
-    const task = tasks[0];
-    const reward = task.reward;
-    const taskLink = task.link;
-    // 🛑 التعديل الأول: ضمان أن النوع هو 'bot' أو 'channel' وأن يكون كله أحرف صغيرة وبدون مسافات
-    const taskType = (task.type || 'bot').trim().toLowerCase(); 
 
     // 3. التحقق مما إذا كانت المهمة قد اكتملت مسبقًا
     const completions = await supabaseFetch(TASK_COMPLETIONS_TABLE, 'GET', null, `?user_id=eq.${id}&task_id=eq.${taskId}&select=id`);
@@ -578,11 +584,10 @@ async function handleCompleteTask(req, res, body) {
     const users = await supabaseFetch('users', 'GET', null, `?id=eq.${id}&select=balance,ref_by,is_banned`);
     const user = users[0];
     if (user.is_banned) return sendError(res, 'User is banned.', 403);
-    
-    // 🛑 التعديل الثاني: استخدام متغير منطقي للتحقق الدقيق
+
+    // For channel tasks, verify membership. For 'bot' tasks, we intentionally skip any external verification.
     const shouldCheckMembership = (taskType === 'channel');
 
-    // 5. التحقق من الانضمام (يتم تخطيه إذا كانت shouldCheckMembership خاطئة)
     if (shouldCheckMembership) {
         const channelUsernameMatch = taskLink.match(/t\.me\/([a-zA-Z0-9_]+)/);
         if (!channelUsernameMatch) return sendError(res, 'Task verification failed: The link is not a supported Telegram channel format for join tasks.', 400);
@@ -590,7 +595,7 @@ async function handleCompleteTask(req, res, body) {
         const isMember = await checkChannelMembership(id, channelUsername);
         if (!isMember) return sendError(res, `User has not joined the required channel: ${channelUsername}`, 400);
     }
-    
+
     // 6. منح الجائزة وتحديث السجلات
     const referrerId = user.ref_by;
     const newBalance = user.balance + reward;
