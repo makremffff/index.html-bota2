@@ -143,6 +143,28 @@
             border: 1px solid #1a1a1a;
         }
         
+        /* Withdrawals filter buttons */
+        .withdraw-filter {
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+            margin-bottom: 12px;
+        }
+        .filter-btn {
+            padding: 8px 12px;
+            border-radius: 10px;
+            border: none;
+            background: #444;
+            color: #e0e0e0;
+            font-weight: 800;
+            cursor: pointer;
+        }
+        .filter-btn.active {
+            background: #00aaff;
+            color: #071722;
+            box-shadow: 0 6px 0 rgba(0,120,180,0.12);
+        }
+
         /* Content Sections */
         .content-section {
             background: #2f2f2f;
@@ -637,6 +659,12 @@
         
         <div class="content-section" id="withdrawals-section">
             <h3 class="history-title">💳 طلبات السحب المعلقة</h3>
+
+            <div class="withdraw-filter" role="tablist" aria-label="Filter withdrawals by method">
+                <button id="filterBinance" class="filter-btn active" onclick="loadAdminData('binance')">سحوبات بينانس</button>
+                <button id="filterFaucetPay" class="filter-btn" onclick="loadAdminData('faucetpay')">سحوبات FaucetPay</button>
+            </div>
+
             <div id="pendingWithdrawalsList">
                 <div class="no-records">جاري تحميل طلبات السحب...</div>
             </div>
@@ -744,6 +772,7 @@
 
         let tgUser = null;
         let searchedUser = null; // لتخزين بيانات المستخدم الذي تم البحث عنه
+        let currentWithdrawMethod = 'binance'; // 'binance' or 'faucetpay'
 
         // 1. وظيفة عرض التنبيهات (Custom Alert)
         function showCustomAlert(title, message, type = "warning") {
@@ -756,9 +785,13 @@
         }
 
         // 2. معالجة بيانات الإطلاق من Telegram Mini App
-        Telegram.WebApp.ready();
-        if (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) {
-            tgUser = Telegram.WebApp.initDataUnsafe.user;
+        try {
+            Telegram.WebApp.ready();
+            if (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) {
+                tgUser = Telegram.WebApp.initDataUnsafe.user;
+            }
+        } catch (e) {
+            console.warn('Telegram WebApp not available in this environment.');
         }
 
         // 3. دالة جلب بيانات API (معدلة لـ Admin)
@@ -810,17 +843,22 @@
         }
         
         // 5. تحميل بيانات لوحة التحكم (السحوبات المعلقة)
-        async function loadAdminData() {
+        async function loadAdminData(method = 'binance') {
+            currentWithdrawMethod = method;
+            // update filter buttons UI
+            document.getElementById('filterBinance').classList.toggle('active', method === 'binance');
+            document.getElementById('filterFaucetPay').classList.toggle('active', method === 'faucetpay');
+
             if (!tgUser || tgUser.id.toString() !== adminUserId) {
                 document.getElementById('pendingWithdrawalsList').innerHTML = '<div class="no-records">لا توجد صلاحية للوصول إلى لوحة التحكم.</div>';
                 return;
             }
 
-            const result = await fetchApi({ type: 'getPendingWithdrawals' });
+            const result = await fetchApi({ type: 'getPendingWithdrawals', method });
             if (result.ok) {
-                displayPendingWithdrawals(result.data.pending_withdrawals || []);
+                displayPendingWithdrawals(result.data.pending_withdrawals || [], method);
             } else {
-                displayPendingWithdrawals([]);
+                displayPendingWithdrawals([], method);
             }
 
             // Also load tasks list for the admin area
@@ -828,7 +866,7 @@
         }
 
         // 6. عرض طلبات السحب المعلقة
-        function displayPendingWithdrawals(requests) {
+        function displayPendingWithdrawals(requests, method = 'binance') {
             const listEl = document.getElementById('pendingWithdrawalsList');
             if (!requests || requests.length === 0) {
                 listEl.innerHTML = '<div class="no-records">لا توجد طلبات سحب معلقة حالياً.</div>';
@@ -839,12 +877,23 @@
             requests.forEach(req => {
                 const dateOptions = { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' };
                 const formattedDate = new Date(req.created_at).toLocaleDateString('ar-EG', dateOptions).replace(',', ' -');
+                // Determine display for payment identifier
+                let paymentLabel = '';
+                let paymentValue = '';
+                if (method === 'faucetpay' || req.faucetpay_email) {
+                    paymentLabel = 'FaucetPay Email';
+                    paymentValue = escapeHtml(req.faucetpay_email || (req.faucetpay || 'N/A'));
+                } else {
+                    paymentLabel = 'معرّف Binance';
+                    paymentValue = escapeHtml(req.binance_id || 'N/A');
+                }
+
                 html += `
                     <div class="admin-list-item" data-request-id="${req.id}">
                         <div class="user-info-admin">
                             <h4>معرّف المستخدم (ID): <span style="color: #ffc107;">${req.user_id}</span></h4>
-                            <p><span>المبلغ:</span> <span style="color: #dc3545;">${req.amount.toLocaleString()} SHIB</span></p>
-                            <p><span>معرّف Binance:</span> <span>${req.binance_id}</span></p>
+                            <p><span>المبلغ:</span> <span style="color: #dc3545;">${Number(req.amount).toLocaleString()} SHIB</span></p>
+                            <p><span>${paymentLabel}:</span> <span>${paymentValue}</span></p>
                             <p><span>تاريخ الطلب:</span> <span>${formattedDate}</span></p>
                         </div>
                         <div class="admin-actions">
@@ -874,7 +923,7 @@
 
             if (result.ok) {
                 // إعادة تحميل بيانات السحوبات عند القبول/الرفض/الحظر
-                loadAdminData();
+                loadAdminData(currentWithdrawMethod);
                 showCustomAlert('نجاح!', result.data.message || `تم تنفيذ الإجراء (${action}) بنجاح.`, 'success');
             }
         }
@@ -1003,7 +1052,7 @@
             
             // إذا كان القسم هو السحوبات، قم بإعادة تحميل البيانات
             if (targetId === 'withdrawals-section') {
-                loadAdminData();
+                loadAdminData(currentWithdrawMethod);
             } else if (targetId === 'user-management-section') {
                 // مسح نتائج البحث عند التبديل
                 document.getElementById('userResult').style.display = 'none';
