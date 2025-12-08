@@ -432,6 +432,10 @@ async function handleToggleBan(req, res, body) {
 }
 
 // Admin action handler for withdrawing accept/reject/ban
+// This implementation operates on separate tables depending on 'method' param to avoid conflicts:
+// - method='faucetpay' => table: faucet_pay
+// - method='binance'  => table: withdrawals
+// Uses conditional PATCH (id + status=eq.pending) to avoid race conditions and double-processing.
 async function handleAdminAction(req, res, body) {
   const { user_id, action_id, action, request_id, user_to_ban, method } = body;
   const adminId = parseInt(user_id);
@@ -458,31 +462,61 @@ async function handleAdminAction(req, res, body) {
     const m = (method && String(method).toLowerCase() === 'faucetpay') ? 'faucetpay' : 'binance';
     const table = m === 'faucetpay' ? 'faucet_pay' : 'withdrawals';
 
+    // Fetch the withdrawal row to validate existence
     const rows = await supabaseFetch(table, 'GET', null, `?id=eq.${reqId}&select=id,user_id,amount,status,binance_id,faucetpay_email`);
     if (!Array.isArray(rows) || rows.length === 0) return sendError(res, 'Withdrawal request not found.', 404);
     const wr = rows[0];
+
+    // Ensure it's pending before taking any action
     if (wr.status !== 'pending') return sendError(res, `Withdrawal is not pending (current status: ${wr.status}).`, 400);
 
     const targetUserId = wr.user_id;
     const amount = parseFloat(wr.amount) || 0;
 
     if (action === 'accept') {
-      await supabaseFetch(table, 'PATCH', { status: 'completed', processed_at: new Date().toISOString() }, `?id=eq.${reqId}`);
+      // Conditional update: only mark completed if still pending (atomic in effect)
+      const updated = await supabaseFetch(table, 'PATCH', { status: 'completed', processed_at: new Date().toISOString() }, `?id=eq.${reqId}&status=eq.pending&select=id,user_id,amount`);
+      const updatedRow = Array.isArray(updated) ? updated[0] : null;
+      if (!updatedRow) {
+        // Means status was changed by another admin/process
+        return sendError(res, `Withdrawal ${reqId} could not be marked completed (it may have been processed already).`, 409);
+      }
+
+      // At this point the withdrawal is marked completed. For BINANCE you will handle external transfer separately.
+      // For FaucetPay you may integrate with FaucetPay API here (not implemented).
       return sendSuccess(res, { message: `Withdrawal ${reqId} accepted (user ${targetUserId}).`, method: m });
     }
 
     if (action === 'reject') {
-      const users = await supabaseFetch('users', 'GET', null, `?id=eq.${targetUserId}&select=balance`);
-      if (!Array.isArray(users) || users.length === 0) {
-        // mark the withdrawal rejected anyway
-        await supabaseFetch(table, 'PATCH', { status: 'rejected', processed_at: new Date().toISOString() }, `?id=eq.${reqId}`);
-        return sendError(res, 'Target user not found. Withdrawal rejected but refund failed.', 500);
+      // Conditional update to mark rejected only if still pending
+      const updated = await supabaseFetch(table, 'PATCH', { status: 'rejected', processed_at: new Date().toISOString() }, `?id=eq.${reqId}&status=eq.pending&select=id,user_id,amount`);
+      const updatedRow = Array.isArray(updated) ? updated[0] : null;
+      if (!updatedRow) {
+        return sendError(res, `Withdrawal ${reqId} could not be rejected (it may have been processed already).`, 409);
       }
-      const user = users[0];
-      const newBalance = (parseFloat(user.balance) || 0) + amount;
-      await supabaseFetch('users', 'PATCH', { balance: newBalance }, `?id=eq.${targetUserId}`);
-      await supabaseFetch(table, 'PATCH', { status: 'rejected', processed_at: new Date().toISOString() }, `?id=eq.${reqId}`);
-      return sendSuccess(res, { message: `Withdrawal ${reqId} rejected and ${amount} refunded to user ${targetUserId}.`, refunded_amount: amount, method: m });
+
+      // Refund the amount to user's balance
+      try {
+        const users = await supabaseFetch('users', 'GET', null, `?id=eq.${targetUserId}&select=balance`);
+        if (!Array.isArray(users) || users.length === 0) {
+          // We already marked the withdrawal as rejected, but couldn't find the user for refund.
+          // Mark the withdrawal as "rejected" (done above) and inform admin that refund failed.
+          return sendError(res, 'Target user not found. Withdrawal rejected but refund failed.', 500);
+        }
+        const user = users[0];
+        const newBalance = (parseFloat(user.balance) || 0) + amount;
+        await supabaseFetch('users', 'PATCH', { balance: newBalance }, `?id=eq.${targetUserId}`);
+        return sendSuccess(res, { message: `Withdrawal ${reqId} rejected and ${amount} refunded to user ${targetUserId}.`, refunded_amount: amount, method: m });
+      } catch (refundError) {
+        console.error('Refund failed after rejecting withdrawal:', refundError.message);
+        // Attempt to annotate the withdrawal with a note that refund failed (optional)
+        try {
+          await supabaseFetch(table, 'PATCH', { status: 'rejected_refund_failed', processed_at: new Date().toISOString() }, `?id=eq.${reqId}`);
+        } catch (annotationErr) {
+          console.warn('Failed to annotate refund failure on withdrawal record:', annotationErr.message);
+        }
+        return sendError(res, `Withdrawal rejected but refund failed: ${refundError.message}`, 500);
+      }
     }
 
     return sendError(res, `Unknown admin action: ${action}`, 400);
