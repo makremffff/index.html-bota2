@@ -232,8 +232,30 @@ async function handleGetUserData(req, res, body) {
 
     const referrals = await supabaseFetch('users', 'GET', null, `?ref_by=eq.${id}&select=id`);
     const referralsCount = Array.isArray(referrals) ? referrals.length : 0;
-    const history = await supabaseFetch('withdrawals', 'GET', null, `?user_id=eq.${id}&select=amount,status,created_at&order=created_at.desc`);
-    const withdrawalHistory = Array.isArray(history) ? history : [];
+
+    // Fetch Binance withdrawals
+    const binanceRecords = await supabaseFetch('withdrawals', 'GET', null, `?user_id=eq.${id}&select=amount,status,created_at,binance_id&order=created_at.desc`);
+    const binanceHistory = Array.isArray(binanceRecords) ? binanceRecords.map(r => ({
+      amount: r.amount,
+      status: r.status,
+      created_at: r.created_at,
+      binance_id: r.binance_id || null,
+      faucetpay_email: null,
+      source: 'binance'
+    })) : [];
+
+    // Fetch FaucetPay withdrawals from the new faucet_pay table
+    const faucetRecords = await supabaseFetch('faucet_pay', 'GET', null, `?user_id=eq.${id}&select=amount,status,created_at,faucetpay_email&order=created_at.desc`);
+    const faucetHistory = Array.isArray(faucetRecords) ? faucetRecords.map(r => ({
+      amount: r.amount,
+      status: r.status,
+      created_at: r.created_at,
+      binance_id: null,
+      faucetpay_email: r.faucetpay_email || null,
+      source: 'faucetpay'
+    })) : [];
+
+    const withdrawalHistory = [...binanceHistory, ...faucetHistory].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
     await supabaseFetch('users', 'PATCH', { last_activity: new Date().toISOString() }, `?id=eq.${id}&select=id`);
 
@@ -347,17 +369,15 @@ async function handleGetPendingWithdrawals(req, res, body) {
     // method can be 'binance' or 'faucetpay' (default binance)
     const m = (method && String(method).toLowerCase() === 'faucetpay') ? 'faucetpay' : 'binance';
 
-    // Fetch pending withdrawals (avoid using unsupported "is.not.null" filter)
-    const pendingAll = await supabaseFetch('withdrawals', 'GET', null, `?status=eq.pending&select=id,user_id,amount,binance_id,faucetpay_email,created_at&order=created_at.desc`);
-    const allList = Array.isArray(pendingAll) ? pendingAll : [];
-
-    // Filter on server-side for the required payment method
-    let pendingList;
+    let pendingList = [];
     if (m === 'faucetpay') {
-      pendingList = allList.filter(r => r.faucetpay_email && String(r.faucetpay_email).trim() !== '');
+      // Fetch directly from faucet_pay table
+      const pending = await supabaseFetch('faucet_pay', 'GET', null, `?status=eq.pending&select=id,user_id,amount,faucetpay_email,created_at&order=created_at.desc`);
+      pendingList = Array.isArray(pending) ? pending : [];
     } else {
       // binance
-      pendingList = allList.filter(r => r.binance_id && String(r.binance_id).trim() !== '');
+      const pending = await supabaseFetch('withdrawals', 'GET', null, `?status=eq.pending&select=id,user_id,amount,binance_id,created_at&order=created_at.desc`);
+      pendingList = Array.isArray(pending) ? pending : [];
     }
 
     sendSuccess(res, { pending_withdrawals: pendingList });
@@ -413,7 +433,7 @@ async function handleToggleBan(req, res, body) {
 
 // Admin action handler for withdrawing accept/reject/ban
 async function handleAdminAction(req, res, body) {
-  const { user_id, action_id, action, request_id, user_to_ban } = body;
+  const { user_id, action_id, action, request_id, user_to_ban, method } = body;
   const adminId = parseInt(user_id);
   if (!action) return sendError(res, 'Missing action field.', 400);
 
@@ -434,7 +454,11 @@ async function handleAdminAction(req, res, body) {
     const reqId = parseInt(request_id);
     if (isNaN(reqId)) return sendError(res, 'Invalid request_id.', 400);
 
-    const rows = await supabaseFetch('withdrawals', 'GET', null, `?id=eq.${reqId}&select=id,user_id,amount,status`);
+    // method indicates which table to operate on: 'faucetpay' or 'binance' (default)
+    const m = (method && String(method).toLowerCase() === 'faucetpay') ? 'faucetpay' : 'binance';
+    const table = m === 'faucetpay' ? 'faucet_pay' : 'withdrawals';
+
+    const rows = await supabaseFetch(table, 'GET', null, `?id=eq.${reqId}&select=id,user_id,amount,status,binance_id,faucetpay_email`);
     if (!Array.isArray(rows) || rows.length === 0) return sendError(res, 'Withdrawal request not found.', 404);
     const wr = rows[0];
     if (wr.status !== 'pending') return sendError(res, `Withdrawal is not pending (current status: ${wr.status}).`, 400);
@@ -443,21 +467,22 @@ async function handleAdminAction(req, res, body) {
     const amount = parseFloat(wr.amount) || 0;
 
     if (action === 'accept') {
-      await supabaseFetch('withdrawals', 'PATCH', { status: 'completed' }, `?id=eq.${reqId}`);
-      return sendSuccess(res, { message: `Withdrawal ${reqId} accepted (user ${targetUserId}).` });
+      await supabaseFetch(table, 'PATCH', { status: 'completed', processed_at: new Date().toISOString() }, `?id=eq.${reqId}`);
+      return sendSuccess(res, { message: `Withdrawal ${reqId} accepted (user ${targetUserId}).`, method: m });
     }
 
     if (action === 'reject') {
       const users = await supabaseFetch('users', 'GET', null, `?id=eq.${targetUserId}&select=balance`);
       if (!Array.isArray(users) || users.length === 0) {
-        await supabaseFetch('withdrawals', 'PATCH', { status: 'rejected' }, `?id=eq.${reqId}`);
+        // mark the withdrawal rejected anyway
+        await supabaseFetch(table, 'PATCH', { status: 'rejected', processed_at: new Date().toISOString() }, `?id=eq.${reqId}`);
         return sendError(res, 'Target user not found. Withdrawal rejected but refund failed.', 500);
       }
       const user = users[0];
       const newBalance = (parseFloat(user.balance) || 0) + amount;
       await supabaseFetch('users', 'PATCH', { balance: newBalance }, `?id=eq.${targetUserId}`);
-      await supabaseFetch('withdrawals', 'PATCH', { status: 'rejected' }, `?id=eq.${reqId}`);
-      return sendSuccess(res, { message: `Withdrawal ${reqId} rejected and ${amount} refunded to user ${targetUserId}.`, refunded_amount: amount });
+      await supabaseFetch(table, 'PATCH', { status: 'rejected', processed_at: new Date().toISOString() }, `?id=eq.${reqId}`);
+      return sendSuccess(res, { message: `Withdrawal ${reqId} rejected and ${amount} refunded to user ${targetUserId}.`, refunded_amount: amount, method: m });
     }
 
     return sendError(res, `Unknown admin action: ${action}`, 400);
@@ -646,12 +671,19 @@ async function handleCompleteTask(req, res, body) {
 }
 
 
-// Withdraw handler (already defined above as handleWithdraw) - reused
+// Withdraw handler (now supports FaucetPay via separate faucet_pay table)
 async function handleWithdraw(req, res, body) {
-  const { user_id, action_id, amount, binance_id } = body;
+  const { user_id, action_id, amount, binance_id, faucetpay_email } = body;
   const id = parseInt(user_id);
-  if (!amount || !binance_id) return sendError(res, 'Missing withdrawal details (amount/binance_id).', 400);
-  if (!await validateAndUseActionId(res, id, action_id, 'withdraw')) return;
+
+  // Validate amount
+  const withdrawalAmount = parseFloat(amount);
+  if (isNaN(withdrawalAmount) || withdrawalAmount <= 0) return sendError(res, 'Invalid withdrawal amount.', 400);
+
+  // Require action id unless admin (admins can bypass)
+  if (!isAdmin(id)) {
+    if (!await validateAndUseActionId(res, id, action_id, 'withdraw')) return;
+  }
 
   try {
     const users = await supabaseFetch('users', 'GET', null, `?id=eq.${id}&select=balance,is_banned`);
@@ -659,27 +691,51 @@ async function handleWithdraw(req, res, body) {
     const user = users[0];
     if (user.is_banned) return sendError(res, 'User is banned.', 403);
 
-    const withdrawalAmount = parseFloat(amount);
-    if (isNaN(withdrawalAmount) || withdrawalAmount <= 0) return sendError(res, 'Invalid withdrawal amount.', 400);
     if (withdrawalAmount > user.balance) return sendError(res, 'Insufficient balance.', 400);
 
-    const newBalance = user.balance - withdrawalAmount;
-    
-    // 1. خصم الرصيد
-    await supabaseFetch('users', 'PATCH', { balance: newBalance }, `?id=eq.${id}`);
+    // Determine destination: FaucetPay if faucetpay_email provided and valid, else require binance_id
+    let destinationIsFaucetpay = false;
+    let destEmail = null;
+    let destBinance = null;
 
-    // 2. إنشاء طلب سحب معلق
-    const withdrawalRecord = {
-      user_id: id,
-      amount: withdrawalAmount,
-      binance_id: String(binance_id).trim(),
-      status: 'pending',
-      created_at: new Date().toISOString(),
-    };
-    await supabaseFetch('withdrawals', 'POST', withdrawalRecord, '?select=id');
+    if (faucetpay_email && String(faucetpay_email).trim() !== '') {
+      const email = String(faucetpay_email).trim();
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) return sendError(res, 'Invalid FaucetPay email address.', 400);
+      destinationIsFaucetpay = true;
+      destEmail = email;
+    } else if (binance_id && String(binance_id).trim() !== '') {
+      destBinance = String(binance_id).trim();
+    } else {
+      return sendError(res, 'Missing withdrawal destination. Provide binance_id or faucetpay_email.', 400);
+    }
+
+    // Deduct balance
+    const newBalance = user.balance - withdrawalAmount;
+    await supabaseFetch('users', 'PATCH', { balance: newBalance, last_activity: new Date().toISOString() }, `?id=eq.${id}`);
+
+    // Insert into appropriate table
+    if (destinationIsFaucetpay) {
+      const payload = {
+        user_id: id,
+        amount: withdrawalAmount,
+        faucetpay_email: destEmail,
+        status: 'pending',
+        created_at: new Date().toISOString()
+      };
+      await supabaseFetch('faucet_pay', 'POST', payload, '?select=id');
+    } else {
+      const payload = {
+        user_id: id,
+        amount: withdrawalAmount,
+        binance_id: destBinance,
+        status: 'pending',
+        created_at: new Date().toISOString()
+      };
+      await supabaseFetch('withdrawals', 'POST', payload, '?select=id');
+    }
 
     sendSuccess(res, { new_balance: newBalance, message: 'Withdrawal request submitted successfully and is pending approval.' });
-
   } catch (error) {
     console.error('Withdrawal failed:', error.message);
     sendError(res, `Withdrawal failed: ${error.message}`, 500);
