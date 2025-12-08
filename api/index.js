@@ -347,17 +347,19 @@ async function handleGetPendingWithdrawals(req, res, body) {
     // method can be 'binance' or 'faucetpay' (default binance)
     const m = (method && String(method).toLowerCase() === 'faucetpay') ? 'faucetpay' : 'binance';
 
-    let query;
+    // Fetch pending withdrawals (avoid using unsupported "is.not.null" filter)
+    const pendingAll = await supabaseFetch('withdrawals', 'GET', null, `?status=eq.pending&select=id,user_id,amount,binance_id,faucetpay_email,created_at&order=created_at.desc`);
+    const allList = Array.isArray(pendingAll) ? pendingAll : [];
+
+    // Filter on server-side for the required payment method
+    let pendingList;
     if (m === 'faucetpay') {
-      // select faucetpay_email if present
-      query = `?status=eq.pending&faucetpay_email=is.not.null&select=id,user_id,amount,faucetpay_email,created_at&order=created_at.desc`;
+      pendingList = allList.filter(r => r.faucetpay_email && String(r.faucetpay_email).trim() !== '');
     } else {
-      // default: binance withdrawals (binance_id not null)
-      query = `?status=eq.pending&binance_id=is.not.null&select=id,user_id,amount,binance_id,created_at&order=created_at.desc`;
+      // binance
+      pendingList = allList.filter(r => r.binance_id && String(r.binance_id).trim() !== '');
     }
 
-    const pending = await supabaseFetch('withdrawals', 'GET', null, query);
-    const pendingList = Array.isArray(pending) ? pending : [];
     sendSuccess(res, { pending_withdrawals: pendingList });
   } catch (error) {
     console.error('GetPendingWithdrawals failed:', error.message);
