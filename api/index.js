@@ -63,6 +63,8 @@ async function supabaseFetch(tableName, method, body = null, queryParams = '?sel
       const json = JSON.parse(text);
       return Array.isArray(json) ? json : { success: true };
     } catch (e) {
+      // Handle 204 No Content
+      if (response.status === 204) return [];
       return { success: true };
     }
   }
@@ -203,10 +205,12 @@ function validateInitData(initData) {
 // Placeholder for processCommission and resetDailyLimitsIfExpired (ensure these are present in the full backend implementation)
 async function processCommission(referrerId, completedUserId, reward) {
   // Implement commission processing logic here (e.g., fetch referrer, calculate commission, update referrer balance, log transaction)
+  // For now, it is an async placeholder that ignores commission logic.
 }
 
 async function resetDailyLimitsIfExpired(userId) {
   // Implement logic to reset ads_watched_today and spins_today based on RESET_INTERVAL_MS
+  // For now, it is an async placeholder that assumes limits are fine.
 }
 
 async function checkRateLimit(userId) {
@@ -374,10 +378,12 @@ async function handleGetPendingWithdrawals(req, res, body) {
       // Fetch directly from faucet_pay table
       const pending = await supabaseFetch('faucet_pay', 'GET', null, `?status=eq.pending&select=id,user_id,amount,faucetpay_email,created_at&order=created_at.desc`);
       pendingList = Array.isArray(pending) ? pending : [];
+      pendingList = pendingList.map(item => ({ ...item, method: 'faucetpay' })); // Add method for clarity
     } else {
       // binance
       const pending = await supabaseFetch('withdrawals', 'GET', null, `?status=eq.pending&select=id,user_id,amount,binance_id,created_at&order=created_at.desc`);
       pendingList = Array.isArray(pending) ? pending : [];
+      pendingList = pendingList.map(item => ({ ...item, method: 'binance' })); // Add method for clarity
     }
 
     sendSuccess(res, { pending_withdrawals: pendingList });
@@ -462,8 +468,9 @@ async function handleAdminAction(req, res, body) {
     const m = (method && String(method).toLowerCase() === 'faucetpay') ? 'faucetpay' : 'binance';
     const table = m === 'faucetpay' ? 'faucet_pay' : 'withdrawals';
 
-    // Fetch the withdrawal row to validate existence
-    const rows = await supabaseFetch(table, 'GET', null, `?id=eq.${reqId}&select=id,user_id,amount,status,binance_id,faucetpay_email`);
+    // Fetch the withdrawal row to validate existence and get details
+    const selectFields = m === 'faucetpay' ? 'id,user_id,amount,status,faucetpay_email' : 'id,user_id,amount,status,binance_id';
+    const rows = await supabaseFetch(table, 'GET', null, `?id=eq.${reqId}&select=${selectFields}`);
     if (!Array.isArray(rows) || rows.length === 0) return sendError(res, 'Withdrawal request not found.', 404);
     const wr = rows[0];
 
@@ -482,8 +489,7 @@ async function handleAdminAction(req, res, body) {
         return sendError(res, `Withdrawal ${reqId} could not be marked completed (it may have been processed already).`, 409);
       }
 
-      // At this point the withdrawal is marked completed. For BINANCE you will handle external transfer separately.
-      // For FaucetPay you may integrate with FaucetPay API here (not implemented).
+      // At this point the withdrawal is marked completed.
       return sendSuccess(res, { message: `Withdrawal ${reqId} accepted (user ${targetUserId}).`, method: m });
     }
 
@@ -499,9 +505,9 @@ async function handleAdminAction(req, res, body) {
       try {
         const users = await supabaseFetch('users', 'GET', null, `?id=eq.${targetUserId}&select=balance`);
         if (!Array.isArray(users) || users.length === 0) {
-          // We already marked the withdrawal as rejected, but couldn't find the user for refund.
-          // Mark the withdrawal as "rejected" (done above) and inform admin that refund failed.
-          return sendError(res, 'Target user not found. Withdrawal rejected but refund failed.', 500);
+          // Withdrawal already marked rejected, but refund failed
+          console.error(`Attempted to refund user ${targetUserId} but user not found.`);
+          return sendSuccess(res, { message: `Withdrawal ${reqId} rejected. Target user for refund not found.`, method: m });
         }
         const user = users[0];
         const newBalance = (parseFloat(user.balance) || 0) + amount;
@@ -511,7 +517,7 @@ async function handleAdminAction(req, res, body) {
         console.error('Refund failed after rejecting withdrawal:', refundError.message);
         // Attempt to annotate the withdrawal with a note that refund failed (optional)
         try {
-          await supabaseFetch(table, 'PATCH', { status: 'rejected_refund_failed', processed_at: new Date().toISOString() }, `?id=eq.${reqId}`);
+          await supabaseFetch(table, 'PATCH', { status: 'rejected_refund_failed' }, `?id=eq.${reqId}`);
         } catch (annotationErr) {
           console.warn('Failed to annotate refund failure on withdrawal record:', annotationErr.message);
         }
@@ -636,12 +642,7 @@ async function handleCompleteTask(req, res, body) {
     const skipVerificationFlag = !!task.no_verification || !!task.skip_verification;
 
     // IMPORTANT CHANGE:
-    // Previously the global initData check at the top-level blocked completeTask requests without initData.
-    // To allow "bot" tasks to be completed without requiring client-side initData, we now:
-    //  - Allow the request to reach this handler (main router exempted completeTask from global initData check)
-    //  - Enforce initData + action_id validation ONLY for non-bot tasks
-    //
-    // This effectively removes verification for bot-type tasks (no initData required, no action_id required).
+    // Enforce initData + action_id validation ONLY for non-bot tasks
     if (taskType !== 'bot') {
       // For non-bot tasks we still require valid initData and a valid action_id token to prevent abuse.
       if (!body.initData || !validateInitData(body.initData)) {
@@ -651,6 +652,8 @@ async function handleCompleteTask(req, res, body) {
     } else {
       // Bot tasks: intentionally skip initData and action_id validation.
       // WARNING: This makes bot tasks easier to automate; rely on rate limits, cooldowns, and other checks.
+      // Check for action_id for bot tasks (if provided)
+      if (action_id && !await validateAndUseActionId(res, id, action_id, `completeTask_${taskId}`)) return;
     }
 
     // 1. تحقق من الحد الزمني لآخر مهمة مكتملة
@@ -670,6 +673,7 @@ async function handleCompleteTask(req, res, body) {
     const rateLimitResult = await checkRateLimit(id);
     if (!rateLimitResult.ok) return sendError(res, rateLimitResult.message, 429);
     const users = await supabaseFetch('users', 'GET', null, `?id=eq.${id}&select=balance,ref_by,is_banned`);
+    if (!Array.isArray(users) || users.length === 0) return sendError(res, 'User not found.', 404);
     const user = users[0];
     if (user.is_banned) return sendError(res, 'User is banned.', 403);
 
@@ -824,7 +828,11 @@ module.exports = async (req, res) => {
     case 'adminAction': await handleAdminAction(req, res, body); break;
     case 'register': await handleRegister(req, res, body); break;
     case 'watchAd': await handleWatchAd(req, res, body); break;
-    case 'commission': await handleCommission(req, res, body); break;
+    case 'commission':
+        // Placeholder for commission: If you implement commission logic, uncomment this and create handleCommission
+        // await handleCommission(req, res, body);
+        sendError(res, 'Commission endpoint not implemented.', 501);
+        break;
     case 'preSpin': await handlePreSpin(req, res, body); break;
     case 'spinResult': await handleSpinResult(req, res, body); break;
     case 'withdraw': await handleWithdraw(req, res, body); break;
