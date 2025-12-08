@@ -336,7 +336,7 @@ async function handleSearchUser(req, res, body) {
 }
 
 async function handleGetPendingWithdrawals(req, res, body) {
-  const { user_id, action_id } = body;
+  const { user_id, action_id, method } = body;
   const adminId = parseInt(user_id);
 
   if (!isAdmin(adminId)) {
@@ -344,7 +344,19 @@ async function handleGetPendingWithdrawals(req, res, body) {
   }
 
   try {
-    const pending = await supabaseFetch('withdrawals', 'GET', null, `?status=eq.pending&select=id,user_id,amount,binance_id,created_at&order=created_at.desc`);
+    // method can be 'binance' or 'faucetpay' (default binance)
+    const m = (method && String(method).toLowerCase() === 'faucetpay') ? 'faucetpay' : 'binance';
+
+    let query;
+    if (m === 'faucetpay') {
+      // select faucetpay_email if present
+      query = `?status=eq.pending&faucetpay_email=is.not.null&select=id,user_id,amount,faucetpay_email,created_at&order=created_at.desc`;
+    } else {
+      // default: binance withdrawals (binance_id not null)
+      query = `?status=eq.pending&binance_id=is.not.null&select=id,user_id,amount,binance_id,created_at&order=created_at.desc`;
+    }
+
+    const pending = await supabaseFetch('withdrawals', 'GET', null, query);
     const pendingList = Array.isArray(pending) ? pending : [];
     sendSuccess(res, { pending_withdrawals: pendingList });
   } catch (error) {
