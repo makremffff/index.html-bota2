@@ -470,23 +470,25 @@ async function handleAdminAction(req, res, body) {
 
     // Fetch the withdrawal row to validate existence and get details
     const selectFields = m === 'faucetpay' ? 'id,user_id,amount,status,faucetpay_email' : 'id,user_id,amount,status,binance_id';
+    // ⚠️ التصحيح: يجب التأكد من أن الاستعلام يركز فقط على السجل الصحيح في الجدول المحدد
     const rows = await supabaseFetch(table, 'GET', null, `?id=eq.${reqId}&select=${selectFields}`);
-    if (!Array.isArray(rows) || rows.length === 0) return sendError(res, 'Withdrawal request not found.', 404);
+    if (!Array.isArray(rows) || rows.length === 0) return sendError(res, `Withdrawal request ${reqId} not found in ${table} table.`, 404);
     const wr = rows[0];
 
     // Ensure it's pending before taking any action
-    if (wr.status !== 'pending') return sendError(res, `Withdrawal is not pending (current status: ${wr.status}).`, 400);
+    if (wr.status !== 'pending') return sendError(res, `Withdrawal ${reqId} is not pending (current status: ${wr.status}).`, 400);
 
     const targetUserId = wr.user_id;
     const amount = parseFloat(wr.amount) || 0;
 
     if (action === 'accept') {
       // Conditional update: only mark completed if still pending (atomic in effect)
+      // ⚠️ التصحيح: يجب التأكد من وجود الشرط status=eq.pending في عملية PATCH لضمان التحديث المشروط
       const updated = await supabaseFetch(table, 'PATCH', { status: 'completed', processed_at: new Date().toISOString() }, `?id=eq.${reqId}&status=eq.pending&select=id,user_id,amount`);
       const updatedRow = Array.isArray(updated) ? updated[0] : null;
       if (!updatedRow) {
         // Means status was changed by another admin/process
-        return sendError(res, `Withdrawal ${reqId} could not be marked completed (it may have been processed already).`, 409);
+        return sendError(res, `Withdrawal ${reqId} could not be marked completed (it may have been processed already or its status is not pending).`, 409);
       }
 
       // At this point the withdrawal is marked completed.
@@ -495,10 +497,11 @@ async function handleAdminAction(req, res, body) {
 
     if (action === 'reject') {
       // Conditional update to mark rejected only if still pending
+      // ⚠️ التصحيح: يجب التأكد من وجود الشرط status=eq.pending في عملية PATCH لضمان التحديث المشروط
       const updated = await supabaseFetch(table, 'PATCH', { status: 'rejected', processed_at: new Date().toISOString() }, `?id=eq.${reqId}&status=eq.pending&select=id,user_id,amount`);
       const updatedRow = Array.isArray(updated) ? updated[0] : null;
       if (!updatedRow) {
-        return sendError(res, `Withdrawal ${reqId} could not be rejected (it may have been processed already).`, 409);
+        return sendError(res, `Withdrawal ${reqId} could not be rejected (it may have been processed already or its status is not pending).`, 409);
       }
 
       // Refund the amount to user's balance
@@ -517,6 +520,7 @@ async function handleAdminAction(req, res, body) {
         console.error('Refund failed after rejecting withdrawal:', refundError.message);
         // Attempt to annotate the withdrawal with a note that refund failed (optional)
         try {
+          // ⚠️ ملاحظة: إذا فشل الـ refund، نحاول إعطاء حالة مختلفة للطلب في الجدول
           await supabaseFetch(table, 'PATCH', { status: 'rejected_refund_failed' }, `?id=eq.${reqId}`);
         } catch (annotationErr) {
           console.warn('Failed to annotate refund failure on withdrawal record:', annotationErr.message);
