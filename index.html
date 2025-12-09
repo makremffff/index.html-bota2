@@ -8,7 +8,7 @@
     <style>
         /* Import Fonts */
         @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700;800;900&display=swap');
-        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght=700&display=swap');
         
         /* Global Reset & Base Styles */
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -752,7 +752,7 @@
         </div>
     </div>
 
-    <div id="customAlert" class="custom-alert-overlay">
+    <div class="modal-overlay" id="customAlert">
         <div class="custom-alert-box">
             <div class="alert-icon" id="alertIcon"></div>
             <div class="alert-title" id="alertTitle"></div>
@@ -913,12 +913,14 @@
             const actionId = await requestActionId('adminAction');
             if (!actionId) return;
 
+            // 💡 التصحيح: إضافة currentWithdrawMethod إلى حمولة الطلب API
             const result = await fetchApi({
                 type: 'adminAction',
                 request_id: action !== 'ban' ? requestId : undefined, // إرسال request_id فقط إذا لم يكن الإجراء حظر
                 action: action,
                 user_to_ban: action === 'ban' ? userIdToBan : undefined, // إرسال user_to_ban فقط إذا كان الإجراء حظر
-                action_id: actionId
+                action_id: actionId,
+                method: currentWithdrawMethod // 👈 المتغير المصحح
             });
 
             if (result.ok) {
